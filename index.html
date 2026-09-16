@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bancada de Teste — Detecção de Spoofing (PAD)</title>
+<style>
+  :root{
+    --bg:#0f1115; --card:#171a21; --line:#262b36; --ink:#e8eaed; --dim:#9aa3b2;
+    --ok:#2ecc71; --bad:#e74c3c; --warn:#f39c12; --accent:#5b8def;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,Segoe UI,Roboto,Arial,sans-serif}
+  header{padding:16px 20px;border-bottom:1px solid var(--line)}
+  header h1{margin:0 0 4px;font-size:18px}
+  header p{margin:0;color:var(--dim)}
+  .wrap{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px 20px;max-width:1200px}
+  @media(max-width:900px){.wrap{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+  .card h2{margin:0 0 10px;font-size:14px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim)}
+  video{width:100%;border-radius:8px;background:#000;aspect-ratio:16/9;object-fit:cover}
+  select,button{font:inherit;color:var(--ink);background:#1f2531;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+  button{cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  button.g{border-color:var(--ok)} button.a{border-color:var(--bad)}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
+  .verdict{font-size:26px;font-weight:700;padding:10px 14px;border-radius:8px;text-align:center;background:#1f2531}
+  .verdict.genuine{color:var(--ok)} .verdict.attack{color:var(--bad)}
+  table{width:100%;border-collapse:collapse;margin-top:6px}
+  th,td{border:1px solid var(--line);padding:8px;text-align:center}
+  th{color:var(--dim);font-weight:600}
+  .kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+  .kpi div{background:#1f2531;border:1px solid var(--line);border-radius:8px;padding:10px;text-align:center}
+  .kpi b{display:block;font-size:22px}
+  .kpi small{color:var(--dim)}
+  .sig{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--dim);white-space:pre-wrap;word-break:break-all}
+  .flag{color:var(--warn);font-weight:600}
+  .muted{color:var(--dim);font-size:12px}
+  code{background:#1f2531;padding:1px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Bancada de Teste de Anti-Spoofing (Presentation/Injection Attack Detection)</h1>
+  <p>Aponte a fonte (webcam real ou OBS Virtual Camera) para o seu detector, rotule a apresentação e meça APCER / BPCER / ACER (ISO/IEC 30107-3).</p>
+</header>
+
+<div class="wrap">
+  <!-- FONTE -->
+  <section class="card">
+    <h2>1 · Fonte de vídeo</h2>
+    <div class="row">
+      <label for="cam" class="muted" style="display:block;margin-bottom:4px">Câmera</label>
+      <select id="cam" aria-label="Selecionar câmera"><option>Clique em "Liberar câmera"</option></select>
+    </div>
+    <div class="row">
+      <button id="grant">Liberar câmera</button>
+      <button id="start">Iniciar fonte selecionada</button>
+      <button id="stop">Parar</button>
+    </div>
+    <video id="v" autoplay playsinline muted aria-label="Pré-visualização ao vivo da câmera (autovisualização, não é gravação)"></video>
+    <canvas id="c" width="320" height="180" hidden></canvas>
+    <p class="muted">Para injetar imagem estática: no OBS adicione uma fonte <code>Imagem</code>, clique em <b>Iniciar Câmera Virtual</b>, e escolha <b>OBS Virtual Camera</b> acima.</p>
+    <div class="row" style="border-top:1px solid var(--line);padding-top:8px">
+      <a href="liveness.html" style="color:var(--accent);font-weight:600;text-decoration:none">→ Abrir o Detector de Liveness (desafio-resposta completo: piscar/virar/sorrir, trajetória, pulso)</a>
+    </div>
+  </section>
+
+  <!-- SINAIS -->
+  <section class="card">
+    <h2>2 · Sinais da fonte (lado do defensor)</h2>
+    <p class="muted">O que um detector pode ler para desconfiar de uma câmera injetada. Não prova nada sozinho — é insumo do seu modelo.</p>
+    <div id="signals" class="sig">—</div>
+  </section>
+
+  <!-- DETECTOR -->
+  <section class="card">
+    <h2>3 · Veredito do detector</h2>
+    <div id="verdict" class="verdict" role="status" aria-live="polite">—</div>
+    <p class="muted">O detector roda em <code>window.detectSpoof(frame, videoEl, track, signals)</code>. Há 1 sinal direto (rótulo de câmera virtual) + 3 sinais de textura/cor combinados (nitidez, variância de saturação, brilho no recorte central) — juntos, ainda fracos contra foto boa: <b>troque pelo SEU modelo treinado</b> editando a função no fim do arquivo.</p>
+    <div class="row"><button id="run1">Rodar detector no frame atual</button></div>
+  </section>
+
+  <!-- PROTOCOLO -->
+  <section class="card">
+    <h2>4 · Protocolo de medição</h2>
+    <p class="muted">Rotule a apresentação atual com a VERDADE conhecida. A bancada captura N frames, roda o detector e soma na matriz.</p>
+    <div class="row">
+      <label>frames por rodada <input id="nframes" type="number" value="15" min="1" max="120" style="width:64px"></label>
+    </div>
+    <div class="row">
+      <button id="markG" class="g">Feed atual é GENUÍNO (rosto vivo real)</button>
+      <button id="markA" class="a">Feed atual é ATAQUE (foto/tela/vídeo/virtual)</button>
+    </div>
+    <table>
+      <tr><th></th><th>detectou GENUÍNO</th><th>detectou ATAQUE</th></tr>
+      <tr><th>era GENUÍNO</th><td id="tn">0</td><td id="fp">0</td></tr>
+      <tr><th>era ATAQUE</th><td id="fn">0</td><td id="tp">0</td></tr>
+    </table>
+    <div class="kpi">
+      <div><b id="apcer">—</b><small>APCER<br>ataque aceito</small></div>
+      <div><b id="bpcer">—</b><small>BPCER<br>genuíno negado</small></div>
+      <div><b id="acer">—</b><small>ACER<br>média</small></div>
+    </div>
+    <div class="row">
+      <button id="export">Exportar CSV</button>
+      <button id="reset">Zerar</button>
+    </div>
+  </section>
+
+  <!-- DATASET -->
+  <section class="card">
+    <h2>5 · Modo dataset (offline, sem OBS)</h2>
+    <p class="muted">Valide o detector contra um conjunto rotulado, sem câmera nenhuma. Soma no mesmo placar acima. Ideal para os datasets públicos de PAD (CASIA-FASD, Replay-Attack, OULU-NPU, CelebA-Spoof, SiW).</p>
+    <div class="row" style="border:1px dashed var(--line);border-radius:8px;padding:8px">
+      <button id="myphoto" class="a">▶ Testar a MINHA foto (rotulada como ATAQUE)</button>
+      <span id="myphotoStatus" class="muted">minha-foto.jpg já está na pasta do bench</span>
+    </div>
+    <div class="row"><label>Imagens GENUÍNAS &nbsp;<input id="dsG" type="file" accept="image/*" multiple></label></div>
+    <div class="row"><label>Imagens de ATAQUE &nbsp;<input id="dsA" type="file" accept="image/*" multiple></label></div>
+    <div class="row"><button id="dsRun">Rodar dataset</button> <span id="dsStatus" class="muted"></span></div>
+  </section>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let stream=null, track=null, lastSignals={};
+const M = {tn:0, fp:0, fn:0, tp:0}; // ground-truth x verdict
+
+async function listCams(){
+  const devs = await navigator.mediaDevices.enumerateDevices();
+  const cams = devs.filter(d=>d.kind==='videoinput');
+  const sel = $('#cam'); sel.innerHTML='';
+  if(!cams.length){ sel.innerHTML='<option>nenhuma câmera encontrada</option>'; return; }
+  cams.forEach((d,i)=>{
+    const o=document.createElement('option');
+    o.value=d.deviceId; o.textContent=d.label || ('Câmera '+(i+1)+' (rótulo oculto até liberar)');
+    sel.appendChild(o);
+  });
+}
+
+$('#grant').onclick = async ()=>{
+  try{
+    const s = await navigator.mediaDevices.getUserMedia({video:true});
+    s.getTracks().forEach(t=>t.stop()); // só para destravar rótulos
+    await listCams();
+  }catch(e){ alert('Permissão de câmera negada ou indisponível: '+e.message); }
+};
+
+$('#start').onclick = async ()=>{
+  stopStream();
+  const id = $('#cam').value;
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({ video: id ? {deviceId:{exact:id}} : true });
+    track = stream.getVideoTracks()[0];
+    $('#v').srcObject = stream;
+    readSignals();
+  }catch(e){ alert('Falha ao abrir a fonte: '+e.message); }
+};
+$('#stop').onclick = stopStream;
+function stopStream(){ if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; track=null; $('#v').srcObject=null; } readSignals(); }   // achado 7: limpa o painel de sinais ao parar
+
+function readSignals(){
+  if(!track){ lastSignals={}; $('#signals').textContent='—'; return; }
+  const s = track.getSettings ? track.getSettings() : {};
+  const label = (track.label||'').toLowerCase();
+  const looksVirtual = /obs|virtual|droidcam|splitcam|manycam|xsplit|snap|akvcam|unity|camtwist/i.test(label);   // achado 4: sincronizado com o VIRT do liveness.html
+  const noFacing = !s.facingMode;
+  const flags=[];
+  if(looksVirtual) flags.push('rótulo bate com câmera VIRTUAL conhecida');
+  if(noFacing) flags.push('sem facingMode (comum em fonte não-física)');
+  lastSignals = {label:track.label, settings:s, looksVirtual, noFacing};
+  $('#signals').innerHTML =
+    'label: '+ (track.label||'(vazio)') +'\n'+
+    'resolução: '+(s.width||'?')+'x'+(s.height||'?')+'  fps: '+(s.frameRate||'?')+'\n'+
+    'facingMode: '+(s.facingMode||'(nenhum)')+'  deviceId: '+((s.deviceId||'').slice(0,12))+'…\n'+
+    (flags.length ? '<span class="flag">⚑ '+flags.join(' | ')+'</span>' : 'sem flags óbvias de virtualização');
+}
+
+function grabFrame(){
+  const v=$('#v'), c=$('#c');
+  if(!v.videoWidth) return null;
+  c.width=Math.min(320, v.videoWidth); c.height=Math.round(c.width*v.videoHeight/v.videoWidth);
+  const ctx=c.getContext('2d'); ctx.drawImage(v,0,0,c.width,c.height);
+  return ctx.getImageData(0,0,c.width,c.height);
+}
+
+function classify(){
+  const frame = grabFrame();
+  if(!frame) return null;
+  const out = window.detectSpoof(frame, $('#v'), track, lastSignals);
+  const label = (out && out.label) || 'genuine';
+  const score = out && typeof out.score==='number' ? out.score : null;
+  const el=$('#verdict');
+  el.className='verdict '+label;
+  el.textContent = (label==='attack'?'ATAQUE':'GENUÍNO') + (score!=null?('  ('+score.toFixed(2)+')'):'');
+  return label;
+}
+$('#run1').onclick = classify;
+
+function runRounds(truth){
+  const n = Math.max(1, Math.min(120, parseInt($('#nframes').value)||15));
+  let i=0;
+  const step=()=>{
+    const v = classify();
+    if(v){
+      if(truth==='genuine'){ v==='genuine'?M.tn++:M.fp++; }
+      else { v==='attack'?M.tp++:M.fn++; }
+    }
+    if(++i<n) requestAnimationFrame(step); else render();
+  };
+  step();
+}
+$('#markG').onclick = ()=>runRounds('genuine');
+$('#markA').onclick = ()=>runRounds('attack');
+
+function render(){
+  $('#tn').textContent=M.tn; $('#fp').textContent=M.fp; $('#fn').textContent=M.fn; $('#tp').textContent=M.tp;
+  const attacks=M.tp+M.fn, bona=M.tn+M.fp;
+  const apcer = attacks? M.fn/attacks : null;   // ataque classificado como genuíno
+  const bpcer = bona? M.fp/bona : null;          // genuíno classificado como ataque
+  const pct=x=> x==null?'—':(x*100).toFixed(1)+'%';
+  $('#apcer').textContent=pct(apcer); $('#bpcer').textContent=pct(bpcer);
+  $('#acer').textContent = (apcer!=null&&bpcer!=null)? pct((apcer+bpcer)/2) : '—';
+}
+$('#reset').onclick=()=>{ M.tn=M.fp=M.fn=M.tp=0; render(); $('#verdict').textContent='—'; $('#verdict').className='verdict'; };
+$('#export').onclick=()=>{
+  const rows=[['metric','value'],['TN_genuino_ok',M.tn],['FP_genuino_negado',M.fp],['FN_ataque_aceito',M.fn],['TP_ataque_pego',M.tp]];
+  const attacks=M.tp+M.fn, bona=M.tn+M.fp;
+  const apcerN=attacks? M.fn/attacks : null, bpcerN=bona? M.fp/bona : null;
+  rows.push(['APCER', apcerN!=null? apcerN.toFixed(4):'']);
+  rows.push(['BPCER', bpcerN!=null? bpcerN.toFixed(4):'']);
+  rows.push(['ACER', (apcerN!=null&&bpcerN!=null)? ((apcerN+bpcerN)/2).toFixed(4):'']);   // achado 6: ACER faltava no CSV
+  const csv=rows.map(r=>r.join(',')).join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download='resultado-pad.csv'; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 0);   // achado 2: revoga a blob URL apos o download
+};
+
+// ---- Modo dataset offline (sem OBS, sem câmera) ----
+function loadImgFromUrl(url){return new Promise((res,rej)=>{const img=new Image();img.onload=()=>res(img);img.onerror=rej;img.src=url;});}   // achado 2: URL criada e revogada por quem chama
+async function runDataset(files, truth){
+  const c=$('#c'), ctx=c.getContext('2d');
+  for(const f of files){
+    const objUrl=URL.createObjectURL(f);
+    let img; try{ img=await loadImgFromUrl(objUrl); }catch{ URL.revokeObjectURL(objUrl); continue; }
+    const w=img.naturalWidth||320;
+    c.width=Math.min(320,w); c.height=Math.round(c.width*(img.naturalHeight||180)/w);
+    ctx.drawImage(img,0,0,c.width,c.height);
+    const frame=ctx.getImageData(0,0,c.width,c.height);
+    URL.revokeObjectURL(objUrl);   // achado 2: revoga assim que o frame ja foi capturado no canvas
+    const out=window.detectSpoof(frame, img, null, {looksVirtual:false});
+    const v=(out&&out.label)||'genuine';
+    if(truth==='genuine'){ v==='genuine'?M.tn++:M.fp++; } else { v==='attack'?M.tp++:M.fn++; }
+  }
+  render();
+}
+$('#dsRun').onclick=async()=>{
+  const g=$('#dsG').files, a=$('#dsA').files;
+  if(!g.length && !a.length){ $('#dsStatus').textContent='escolha as imagens primeiro'; return; }
+  $('#dsRun').disabled=true; $('#dsStatus').textContent='rodando…';
+  await runDataset(g,'genuine'); await runDataset(a,'attack');
+  $('#dsStatus').textContent='feito: '+g.length+' genuínas + '+a.length+' ataque';
+  $('#dsRun').disabled=false;
+};
+
+// ---- Botão "Testar a minha foto" (arquivo minha-foto.jpg servido do mesmo local) ----
+$('#myphoto').onclick = ()=>{
+  const img = new Image();
+  img.onload = ()=>{
+    const c=$('#c'), ctx=c.getContext('2d');
+    const w=img.naturalWidth||320;
+    c.width=Math.min(320,w); c.height=Math.round(c.width*(img.naturalHeight||180)/w);
+    ctx.drawImage(img,0,0,c.width,c.height);
+    const frame=ctx.getImageData(0,0,c.width,c.height);
+    const out=window.detectSpoof(frame, img, null, {looksVirtual:false});
+    const v=(out&&out.label)||'genuine';
+    v==='attack'?M.tp++:M.fn++;            // verdade conhecida: é ATAQUE (foto estática)
+    render();
+    const el=$('#verdict'); el.className='verdict '+v;
+    el.textContent=(v==='attack'?'ATAQUE':'GENUÍNO')+(out&&typeof out.score==='number'?('  ('+out.score.toFixed(2)+')'):'');
+    $('#myphotoStatus').innerHTML = v==='attack'
+      ? '<span style="color:var(--ok)">detector PEGOU — correto, foto estática é ataque</span>'
+      : '<span style="color:var(--bad)">detector DEIXOU PASSAR — falhou, isso é APCER subindo</span>';
+  };
+  img.onerror=()=>{ $('#myphotoStatus').textContent='não encontrei minha-foto.jpg na pasta do bench'; };
+  img.src='minha-foto.jpg';
+};
+
+navigator.mediaDevices.addEventListener?.('devicechange', listCams);
+listCams();
+
+// ==========================================================================
+//  SEU DETECTOR ENTRA AQUI. Substitua o corpo por uma chamada ao seu modelo.
+//  Deve devolver { label: 'genuine' | 'attack', score: 0..1 }.
+//  O placeholder abaixo é uma HEURÍSTICA (não é modelo treinado) que combina
+//  3 sinais de textura/cor conhecidos na literatura de detecção de ataques de
+//  apresentação (PAD): (a) rótulo de câmera virtual; (b) nitidez por variância
+//  do Laplaciano — foto/tela recapturada tende a ter textura diferente da
+//  pele; (c) variância da SATURAÇÃO (HSV) — pele viva tem micro-variação por
+//  fluxo sanguíneo/poros/oleosidade que uma reprodução (impressa ou de tela)
+//  tende a achatar; (d) fração de pixels quase-brancos saturados — indício de
+//  brilho de tela (glare). Cada sinal é fraco sozinho; a combinação é mais
+//  robusta, mas ainda é heurística — troque por um classificador treinado
+//  (ex.: um modelo PAD público, ou o seu próprio, com dataset rotulado) para
+//  qualquer uso além de demonstração.
+// ==========================================================================
+window.detectSpoof = function(frame, videoEl, track, signals){
+  // (a) sinal de virtualização vindo do rótulo/settings
+  if(signals && signals.looksVirtual) return {label:'attack', score:0.95, signals:{virtualCam:true}};
+
+  const {data,width:w,height:h}=frame;
+  // Recorte central (~60% x 60%): os 3 sinais abaixo descrevem TEXTURA DE PELE/TELA, não
+  // o fundo do enquadramento. Sem recorte, um fundo de estúdio branco (comum em foto de
+  // documento) conta como "brilho de tela" e confunde o sinal (d) — medido nesta bancada:
+  // com o frame inteiro, minha-foto.jpg dava 41% de pixels quase-brancos só pelo fundo.
+  const x0=Math.floor(w*0.20), x1=Math.ceil(w*0.80);
+  const y0=Math.floor(h*0.20), y1=Math.ceil(h*0.80);
+  const rw=x1-x0, rh=y1-y0;
+  const gray=new Float32Array(rw*rh);
+  const sat=new Float32Array(rw*rh);
+  let whiteCount=0;
+  for(let y=y0,ry=0; y<y1; y++,ry++){
+    for(let x=x0,rx=0; x<x1; x++,rx++){
+      const i=(y*w+x)*4, p=ry*rw+rx;
+      const r=data[i],g=data[i+1],b=data[i+2];
+      gray[p]=0.299*r+0.587*g+0.114*b;
+      const mx=Math.max(r,g,b), mn=Math.min(r,g,b);
+      sat[p]= mx>0 ? (mx-mn)/mx : 0;
+      if(r>250 && g>250 && b>250) whiteCount++;
+    }
+  }
+
+  // (b) variância do Laplaciano (proxy de foco/textura) em escala de cinza, no recorte
+  let lapMean=0,lapN=0; const lapVals=[];
+  for(let y=1;y<rh-1;y++)for(let x=1;x<rw-1;x++){
+    const i=y*rw+x;
+    const lap=4*gray[i]-gray[i-1]-gray[i+1]-gray[i-rw]-gray[i+rw];
+    lapVals.push(lap); lapMean+=lap; lapN++;
+  }
+  lapMean/=lapN; let lapVar=0; for(const v of lapVals) lapVar+=(v-lapMean)*(v-lapMean); lapVar/=lapN;
+  const sharpScore = Math.max(0, Math.min(1, 1 - lapVar/200));   // baixa nitidez -> suspeita
+
+  // (c) variância da saturação — pele viva tem mais micro-variação que reprodução achatada
+  let satMean=0; for(let i=0;i<sat.length;i++) satMean+=sat[i]; satMean/=sat.length;
+  let satVar=0; for(let i=0;i<sat.length;i++) satVar+=(sat[i]-satMean)*(sat[i]-satMean); satVar/=sat.length;
+  const satScore = Math.max(0, Math.min(1, 1 - satVar*40));      // baixa variância -> suspeita
+
+  // (d) fração de pixels quase-brancos saturados NO RECORTE CENTRAL — indício de brilho de
+  // tela sem o fundo do enquadramento contaminar a contagem
+  const whiteFrac = whiteCount / (rw*rh);
+  const glareScore = Math.max(0, Math.min(1, whiteFrac*6));      // muito branco -> suspeita
+
+  // combinação simples (média ponderada); ajuste os pesos com os seus dados
+  const score = Math.max(0, Math.min(1, 0.45*sharpScore + 0.35*satScore + 0.20*glareScore));
+  return {
+    label: score>0.55 ? 'attack':'genuine',
+    score,
+    signals:{ sharpScore:+sharpScore.toFixed(2), satScore:+satScore.toFixed(2), glareScore:+glareScore.toFixed(2), lapVar:+lapVar.toFixed(1), satVar:+satVar.toFixed(4), whiteFrac:+whiteFrac.toFixed(4), roi:[x0,y0,x1,y1] }
+  };
+};
+</script>
+</body>
+</html>
