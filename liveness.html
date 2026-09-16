@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Detector de Liveness — Desafio-Resposta</title>
 <style>
-  :root{--bg:#0f1115;--card:#171a21;--line:#262b36;--ink:#e8eaed;--dim:#9aa3b2;--ok:#2ecc71;--bad:#e74c3c;--warn:#f39c12;--accent:#5b8def;}
+  :root{--bg:#0f1115;--card:#171a21;--line:#262b36;--ctrl-line:#6b7280;--ink:#e8eaed;--dim:#9aa3b2;--ok:#2ecc71;--bad:#e74c3c;--warn:#f39c12;--accent:#5b8def;color-scheme:dark;}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,Segoe UI,Roboto,Arial,sans-serif}
   header{padding:14px 20px;border-bottom:1px solid var(--line)}
@@ -15,8 +15,9 @@
   .wrap{max-width:720px;margin:0 auto;padding:16px 20px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
   video{width:100%;border-radius:10px;background:#000;aspect-ratio:4/3;object-fit:cover;transform:scaleX(-1)}
-  select,button{font:inherit;color:var(--ink);background:#1f2531;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+  select,button{font:inherit;color:var(--ink);background:#1f2531;border:1px solid var(--ctrl-line);border-radius:8px;padding:8px 10px}
   button{cursor:pointer} button:hover{border-color:var(--accent)} button:disabled{opacity:.5;cursor:default}
+  button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   button.primary{background:var(--accent);border-color:var(--accent);color:var(--bg);font-weight:700;font-size:16px;padding:12px 18px}
   .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
   .prompt{font-size:24px;font-weight:800;text-align:center;padding:16px;border-radius:10px;background:#1f2531;min-height:30px;margin-top:10px}
@@ -37,13 +38,14 @@
 <header>
   <h1>Detector de Liveness</h1>
   <p>Um clique, um painel: prova de vida com desafio aleatório. <a href="index.html"><span aria-hidden="true">←</span> bench</a></p>
+  <p class="muted">100% local: nenhum quadro de vídeo sai do seu navegador. Os limiares dos sinais estão comentados no código-fonte (transparência acadêmica) — servem para testar e endurecer o SEU detector, não para burlar o de terceiros.</p>
 </header>
 
 <div class="wrap">
   <div class="card">
     <video id="v" autoplay playsinline muted aria-label="Pré-visualização ao vivo da câmera (autovisualização, não é gravação)"></video>
     <canvas id="c" width="160" height="120" hidden></canvas>
-    <div id="engine" class="muted" style="margin-top:8px">motor: carregando MediaPipe FaceMesh…</div>
+    <div id="engine" class="muted" style="margin-top:8px" aria-live="polite">motor: carregando MediaPipe FaceMesh…</div>
 
     <div class="row">
       <button id="go" class="primary"><span aria-hidden="true">▶</span> Começar prova de vida</button>
@@ -61,7 +63,7 @@
   <details>
     <summary>Diagnóstico e autoteste (sem câmera)</summary>
     <div class="row"><button id="selftest">Rodar autoteste</button></div>
-    <div id="testout" class="bars"></div>
+    <div id="testout" class="bars" aria-live="polite"></div>
     <div id="log" class="bars"></div>
   </details>
 </div>
@@ -162,6 +164,8 @@ let sourceSuspect=false;            // câmera virtual/injeção detectada
 let motionHist=[];                  // janela p/ mediana móvel (detector de corte)
 let rppgFH=[], rppgCK=[];           // proxy de pulso: testa + bochecha, {t,v} por tempo real
 const PPG_WIN_MS=6000;
+let calibTimer=null, startGen=0;    // achados críticos 15/09: timeout de calibração + cancelamento de getUserMedia em voo
+const CALIB_TIMEOUT_MS=8000;
 
 const VIRT=/obs|virtual|droidcam|splitcam|manycam|xsplit|snap|akvcam|unity|camtwist/i;
 let userPicked=false;
@@ -185,7 +189,11 @@ function feedCalib(e){
     const low=Math.max(0.10, 0.6*baseOpen); const high=Math.max(low+0.03, 0.8*baseOpen);
     blink.setThresholds(low, high); calib.baseOpen=baseOpen; calib.done=true;
     log('calibração: baseOpen='+baseOpen.toFixed(3)+' LOW='+low.toFixed(3)+' HIGH='+high.toFixed(3));
-    if(wantChallenge && !challenge){ wantChallenge=false; runChallenge(); }
+    if(wantChallenge && !challenge){
+      wantChallenge=false;
+      if(calibTimer){ clearTimeout(calibTimer); calibTimer=null; }
+      runChallenge();
+    }
   }
 }
 
@@ -228,14 +236,24 @@ function samplePPG(lm){
 function onResults(res){
   if(!streaming) return;
   const lm = res.multiFaceLandmarks && res.multiFaceLandmarks[0];
-  faceSeen=!!lm; if(!lm){ lastLm=null; return; }
+  faceSeen=!!lm;
+  if(!lm){
+    // achado CRÍTICO 15/09 (shitara): antes retornava aqui sem redesenhar o painel — ele
+    // congelava em "rosto: sim" com a câmera apontada pra parede. Agora mostra o estado real.
+    lastLm=null; prevLm=null; motionInst=0;
+    drawBars();
+    return;
+  }
   prevLm=lastLm; lastLm=lm;
   liveEAR=earsFrom(lm); liveYaw=yawRatio(lm); liveMouth=mouthRatio(lm);
+  feedCalib(liveEAR); blink.update(liveEAR);
   if(prevLm){
     let s=0; for(let i=0;i<lm.length;i++){ s+=dist(lm[i],prevLm[i]); }
     motionInst=(s/lm.length)/faceWidth(lm);   // normalizado pela largura do rosto
-  } else motionInst=0;
-  feedCalib(liveEAR); blink.update(liveEAR); staticDet.update(motionInst);
+    staticDet.update(motionInst);   // achado (leona 15/09): só alimenta a trava quando há frame anterior de verdade — reaquisição de rosto não injeta voto falso de "parado"
+  } else {
+    motionInst=0;
+  }
   motionHist.push(motionInst); if(motionHist.length>40) motionHist.shift();
   samplePPG(lm);
   drawBars(); if(challenge) tickChallenge();
@@ -269,26 +287,41 @@ async function listCams(){
 async function startCam(){
   stopStream();
   if(!engineReady){ alert('Motor de rosto não carregou. Veja o diagnóstico.'); return false; }
+  const myGen = ++startGen;
+  let s=null;
   try{
-    let s=await navigator.mediaDevices.getUserMedia({video:true});
+    s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'user'}}});   // achado (leona 15/09): sem isto, celular podia abrir a câmera traseira sem avisar
+    if(myGen!==startGen){ s.getTracks().forEach(t=>t.stop()); return false; }   // achado CRÍTICO 15/09 (leona): "Parar" clicado durante o pedido de permissão não parava mais nada — agora cancela
     await listCams();
     const cams=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput');
+    if(myGen!==startGen){ s.getTracks().forEach(t=>t.stop()); return false; }
     let targetId=(userPicked && $('#cam').value) ? $('#cam').value : null;
     if(!targetId){ const p=pickPhysical(cams); if(p){ targetId=p.deviceId; $('#cam').value=p.deviceId; log('câmera física auto: '+(p.label||'?')); } }
     const curId=s.getVideoTracks()[0].getSettings().deviceId;
-    if(targetId && targetId!==curId){ s.getTracks().forEach(t=>t.stop()); s=await navigator.mediaDevices.getUserMedia({video:{deviceId:{exact:targetId}}}); }
+    if(targetId && targetId!==curId){
+      const old=s;
+      try{ s=await navigator.mediaDevices.getUserMedia({video:{deviceId:{exact:targetId}}}); old.getTracks().forEach(t=>t.stop()); }
+      catch(e){ log('câmera física preferida falhou, mantendo a padrão: '+e.message); s=old; }   // achado (leona 15/09): sem fallback, câmera ocupada por OBS/Zoom/Teams deixava sem nada
+    }
+    if(myGen!==startGen){ s.getTracks().forEach(t=>t.stop()); return false; }
     stream=s; track=s.getVideoTracks()[0]; $('#v').srcObject=stream; streaming=true;
     blink.reset(); staticDet.reset(); resetCalib(); motionHist=[]; rppgFH=[]; rppgCK=[];
-    const st=track.getSettings?track.getSettings():{};
-    sourceSuspect = VIRT.test((track.label||'').toLowerCase()) || !st.facingMode;
+    // achado corroborado por 3 auditorias em 15/09 (leona+shitara+bruna): facingMode ausente
+    // sozinho NÃO indica câmera virtual — webcam USB de mesa tipicamente não reporta. Só o
+    // rótulo bater com uma marca virtual conhecida conta como suspeita.
+    sourceSuspect = VIRT.test((track.label||'').toLowerCase());
     if(sourceSuspect){ log('⚑ fonte pode ser virtual: '+(track.label||'sem rótulo')); }
     try{ await $('#v').play(); }catch(e){ log('autoplay: '+e.message); }
     epoch++; pump(epoch); log('câmera: '+(track.label||'?'));
     return true;
-  }catch(e){ alert('Falha na câmera: '+e.message); log('getUserMedia falhou: '+e.message); return false; }
+  }catch(e){
+    if(s) s.getTracks().forEach(t=>t.stop());   // achado CRÍTICO 15/09 (leona): vazamento se enumerateDevices ou o getUserMedia com deviceId exact lançassem depois do 1º stream já aberto — luz da câmera ficava acesa sem handle pra desligar
+    alert('Falha na câmera: '+e.message); log('getUserMedia falhou: '+e.message); return false;
+  }
 }
 function stopStream(clearUI=true){
-  streaming=false; epoch++; if(rafId){ cancelAnimationFrame(rafId); rafId=null; } stopWatchdog(); challenge=null; renderSteps();
+  streaming=false; epoch++; startGen++; if(rafId){ cancelAnimationFrame(rafId); rafId=null; } stopWatchdog(); challenge=null; renderSteps();
+  if(calibTimer){ clearTimeout(calibTimer); calibTimer=null; }
   if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;track=null;$('#v').srcObject=null;}
   if(clearUI){ $('#bars').textContent=''; $('#verdict').className='verdict'; $('#verdict').textContent='—'; }  // achado 8: limpa a tela so quando for parada manual do usuario
 }
@@ -310,6 +343,20 @@ $('#go').onclick=async()=>{
     wantChallenge=true;
     const ok=await startCam();
     if(!ok){ wantChallenge=false; $('#prompt').textContent='não consegui abrir a câmera — veja o diagnóstico'; }
+    else{
+      // achado CRÍTICO 15/09 (leona): sem timeout, rosto nunca detectado (luz ruim, câmera
+      // errada, wasm falho) deixava a página travada pra sempre com a câmera acesa e sem erro.
+      if(calibTimer) clearTimeout(calibTimer);
+      calibTimer=setTimeout(()=>{
+        calibTimer=null;
+        if(wantChallenge){
+          wantChallenge=false;
+          $('#prompt').textContent='não consegui ver seu rosto em '+(CALIB_TIMEOUT_MS/1000)+'s — confira a luz, a câmera selecionada e tente de novo';
+          log('calibração expirou sem detectar rosto ('+CALIB_TIMEOUT_MS+'ms)');
+          stopStream();
+        }
+      }, CALIB_TIMEOUT_MS);
+    }
   } finally { opening=false; $('#go').disabled=false; }
 };
 $('#stop').onclick=()=>{ stopStream(); $('#prompt').textContent='parado. clique "Começar" para rodar de novo'; };
@@ -379,9 +426,13 @@ function startWatchdog(){ stopWatchdog(); watchdog=setInterval(()=>{ if(!challen
 function stopWatchdog(){ if(watchdog){ clearInterval(watchdog); watchdog=null; } }
 function finish(pass,reason){
   const el=$('#verdict'); el.className='verdict '+(pass?'live':'spoof');
-  el.innerHTML = (pass?'<span aria-hidden="true">✔</span> VIVO (genuíno)':'<span aria-hidden="true">✖</span> ATAQUE (não provou vida)') +
+  // achado CRÍTICO 15/09 (leona+shitara): o motivo era calculado e só ia pro log, dentro do
+  // <details> fechado — a tela só dizia "ATAQUE" sem dizer por quê. Agora aparece no veredito.
+  const reasonLine = '<span class="warn-line" style="color:'+(pass?'var(--dim)':'var(--warn)')+'">'+reason+'</span>';
+  el.innerHTML = (pass?'<span aria-hidden="true">✔</span> VIVO (genuíno)':'<span aria-hidden="true">✖</span> NÃO PROVOU VIDA') +
+    reasonLine +
     (pass && sourceSuspect ? '<span class="warn-line">⚑ mas a fonte parece câmera virtual — revisar manualmente</span>' : '');
-  $('#prompt').textContent = pass?'passou! clique "Começar" para repetir':'reprovou — clique "Começar" para tentar de novo';
+  $('#prompt').textContent = pass?'passou! clique "Começar" para repetir':'não provou — clique "Começar" para tentar de novo';
   log((pass?'PASSOU':'REPROVOU')+': '+reason+(sourceSuspect?' [fonte suspeita]':''));
   stopStream(false);   // achado 13: desliga camera e o laco de inferencia ao terminar, sem apagar o veredito que acabou de mostrar
 }
@@ -436,7 +487,7 @@ $('#selftest').onclick=()=>{
 };
 
 // boot
-navigator.mediaDevices.addEventListener?.('devicechange', listCams);
+navigator.mediaDevices?.addEventListener?.('devicechange', listCams);   // achado CRÍTICO 15/09 (leona): so o metodo era protegido — em origem sem HTTPS, navigator.mediaDevices e undefined e o throw travava o initEngine() da linha seguinte, prendendo "carregando..." pra sempre
 listCams();
 if(document.readyState!=='loading') initEngine(); else window.addEventListener('DOMContentLoaded', initEngine);
 </script>

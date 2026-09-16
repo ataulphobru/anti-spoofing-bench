@@ -6,8 +6,9 @@
 <title>Bancada de Teste — Detecção de Spoofing (PAD)</title>
 <style>
   :root{
-    --bg:#0f1115; --card:#171a21; --line:#262b36; --ink:#e8eaed; --dim:#9aa3b2;
+    --bg:#0f1115; --card:#171a21; --line:#262b36; --ctrl-line:#6b7280; --ink:#e8eaed; --dim:#9aa3b2;
     --ok:#2ecc71; --bad:#e74c3c; --warn:#f39c12; --accent:#5b8def;
+    color-scheme:dark;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,Segoe UI,Roboto,Arial,sans-serif}
@@ -19,9 +20,10 @@
   .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
   .card h2{margin:0 0 10px;font-size:14px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim)}
   video{width:100%;border-radius:8px;background:#000;aspect-ratio:16/9;object-fit:cover}
-  select,button{font:inherit;color:var(--ink);background:#1f2531;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+  select,button{font:inherit;color:var(--ink);background:#1f2531;border:1px solid var(--ctrl-line);border-radius:8px;padding:8px 10px}
   button{cursor:pointer}
   button:hover{border-color:var(--accent)}
+  button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   button.g{border-color:var(--ok)} button.a{border-color:var(--bad)}
   .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
   .verdict{font-size:26px;font-weight:700;padding:10px 14px;border-radius:8px;text-align:center;background:#1f2531}
@@ -43,14 +45,15 @@
 <header>
   <h1>Bancada de Teste de Anti-Spoofing (Presentation/Injection Attack Detection)</h1>
   <p>Aponte a fonte (webcam real ou OBS Virtual Camera) para o seu detector, rotule a apresentação e meça APCER / BPCER / ACER (ISO/IEC 30107-3).</p>
+  <p class="muted">100% local: nenhum quadro de vídeo ou imagem sai do seu navegador — não há servidor, não há upload.</p>
 </header>
 
 <div class="wrap">
   <!-- FONTE -->
   <section class="card">
     <h2>1 · Fonte de vídeo</h2>
-    <div class="row">
-      <label for="cam" class="muted" style="display:block;margin-bottom:4px">Câmera</label>
+    <div class="row" style="flex-direction:column;align-items:flex-start;gap:2px">
+      <label for="cam" class="muted">Câmera</label>
       <select id="cam" aria-label="Selecionar câmera"><option>Clique em "Liberar câmera"</option></select>
     </div>
     <div class="row">
@@ -60,7 +63,7 @@
     </div>
     <video id="v" autoplay playsinline muted aria-label="Pré-visualização ao vivo da câmera (autovisualização, não é gravação)"></video>
     <canvas id="c" width="320" height="180" hidden></canvas>
-    <p class="muted">Para injetar imagem estática: no OBS adicione uma fonte <code>Imagem</code>, clique em <b>Iniciar Câmera Virtual</b>, e escolha <b>OBS Virtual Camera</b> acima.</p>
+    <p class="muted">Para injetar imagem estática: no OBS adicione uma fonte <code>Imagem</code>, clique em <b>Iniciar Câmera Virtual</b>, depois clique em "Liberar câmera" aqui e escolha <b>OBS Virtual Camera</b> na lista.</p>
     <div class="row" style="border-top:1px solid var(--line);padding-top:8px">
       <a href="liveness.html" style="color:var(--accent);font-weight:600;text-decoration:none">→ Abrir o Detector de Liveness (desafio-resposta completo: piscar/virar/sorrir, trajetória, pulso)</a>
     </div>
@@ -114,17 +117,18 @@
     <p class="muted">Valide o detector contra um conjunto rotulado, sem câmera nenhuma. Soma no mesmo placar acima. Ideal para os datasets públicos de PAD (CASIA-FASD, Replay-Attack, OULU-NPU, CelebA-Spoof, SiW).</p>
     <div class="row" style="border:1px dashed var(--line);border-radius:8px;padding:8px">
       <button id="myphoto" class="a">▶ Testar a MINHA foto (rotulada como ATAQUE)</button>
-      <span id="myphotoStatus" class="muted">minha-foto.jpg já está na pasta do bench</span>
+      <span id="myphotoStatus" class="muted" aria-live="polite">funciona se você colocar minha-foto.jpg nesta pasta — não incluída nesta cópia publicada; use o upload abaixo para testar uma foto sua</span>
     </div>
     <div class="row"><label>Imagens GENUÍNAS &nbsp;<input id="dsG" type="file" accept="image/*" multiple></label></div>
     <div class="row"><label>Imagens de ATAQUE &nbsp;<input id="dsA" type="file" accept="image/*" multiple></label></div>
-    <div class="row"><button id="dsRun">Rodar dataset</button> <span id="dsStatus" class="muted"></span></div>
+    <div class="row"><button id="dsRun">Rodar dataset</button> <span id="dsStatus" class="muted" aria-live="polite"></span></div>
   </section>
 </div>
 
 <script>
 const $ = s => document.querySelector(s);
 let stream=null, track=null, lastSignals={};
+let startBusy=false, roundBusy=false;
 const M = {tn:0, fp:0, fn:0, tp:0}; // ground-truth x verdict
 
 async function listCams(){
@@ -144,18 +148,22 @@ $('#grant').onclick = async ()=>{
     const s = await navigator.mediaDevices.getUserMedia({video:true});
     s.getTracks().forEach(t=>t.stop()); // só para destravar rótulos
     await listCams();
-  }catch(e){ alert('Permissão de câmera negada ou indisponível: '+e.message); }
+  }catch(e){ alert('Permissão de câmera negada ou indisponível: '+e.message+String.fromCharCode(10)+'Clique no ícone de câmera na barra de endereço do navegador para permitir o acesso.'); }
 };
 
 $('#start').onclick = async ()=>{
-  stopStream();
-  const id = $('#cam').value;
+  if(startBusy) return;                 // achado (leona 15/09): duplo clique abria 2 streams e perdia o handle do 1o
+  startBusy=true; $('#start').disabled=true;
   try{
-    stream = await navigator.mediaDevices.getUserMedia({ video: id ? {deviceId:{exact:id}} : true });
-    track = stream.getVideoTracks()[0];
-    $('#v').srcObject = stream;
-    readSignals();
-  }catch(e){ alert('Falha ao abrir a fonte: '+e.message); }
+    stopStream();
+    const id = $('#cam').value;
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({ video: id ? {deviceId:{exact:id}} : true });
+      track = stream.getVideoTracks()[0];
+      $('#v').srcObject = stream;
+      readSignals();
+    }catch(e){ alert('Falha ao abrir a fonte: '+e.message); }
+  } finally { startBusy=false; $('#start').disabled=false; }
 };
 $('#stop').onclick = stopStream;
 function stopStream(){ if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; track=null; $('#v').srcObject=null; } readSignals(); }   // achado 7: limpa o painel de sinais ao parar
@@ -166,29 +174,38 @@ function readSignals(){
   const label = (track.label||'').toLowerCase();
   const looksVirtual = /obs|virtual|droidcam|splitcam|manycam|xsplit|snap|akvcam|unity|camtwist/i.test(label);   // achado 4: sincronizado com o VIRT do liveness.html
   const noFacing = !s.facingMode;
-  const flags=[];
-  if(looksVirtual) flags.push('rótulo bate com câmera VIRTUAL conhecida');
-  if(noFacing) flags.push('sem facingMode (comum em fonte não-física)');
   lastSignals = {label:track.label, settings:s, looksVirtual, noFacing};
-  $('#signals').innerHTML =
+  const el = $('#signals');
+  el.textContent =
     'label: '+ (track.label||'(vazio)') +'\n'+
     'resolução: '+(s.width||'?')+'x'+(s.height||'?')+'  fps: '+(s.frameRate||'?')+'\n'+
-    'facingMode: '+(s.facingMode||'(nenhum)')+'  deviceId: '+((s.deviceId||'').slice(0,12))+'…\n'+
-    (flags.length ? '<span class="flag">⚑ '+flags.join(' | ')+'</span>' : 'sem flags óbvias de virtualização');
+    'facingMode: '+(s.facingMode||'(nenhum, normal em webcam de mesa)')+'  deviceId: '+((s.deviceId||'').slice(0,12))+'…\n';
+  // achado corroborado por 3 auditorias em 15/09 (leona+shitara+bruna): facingMode ausente
+  // sozinho NAO indica camera virtual - webcam USB de desktop tipicamente nao reporta.
+  // So o rotulo bater com uma marca virtual conhecida conta como flag.
+  if(looksVirtual){
+    const span=document.createElement('span'); span.className='flag';
+    span.textContent='⚑ rótulo bate com câmera VIRTUAL conhecida';
+    el.appendChild(span);
+  } else {
+    el.append('sem flags óbvias de virtualização');
+  }
 }
 
 function grabFrame(){
   const v=$('#v'), c=$('#c');
   if(!v.videoWidth) return null;
   c.width=Math.min(320, v.videoWidth); c.height=Math.round(c.width*v.videoHeight/v.videoWidth);
-  const ctx=c.getContext('2d'); ctx.drawImage(v,0,0,c.width,c.height);
+  const ctx=c.getContext('2d', {willReadFrequently:true}); ctx.drawImage(v,0,0,c.width,c.height);
   return ctx.getImageData(0,0,c.width,c.height);
 }
 
 function classify(){
   const frame = grabFrame();
   if(!frame) return null;
-  const out = window.detectSpoof(frame, $('#v'), track, lastSignals);
+  let out;
+  try{ out = window.detectSpoof(frame, $('#v'), track, lastSignals); }
+  catch(e){ console.error('detectSpoof lançou erro:', e); return null; }   // achado (leona 15/09): sem isto, um modelo proprio quebrado derrubava a rodada inteira no meio
   const label = (out && out.label) || 'genuine';
   const score = out && typeof out.score==='number' ? out.score : null;
   const el=$('#verdict');
@@ -196,10 +213,19 @@ function classify(){
   el.textContent = (label==='attack'?'ATAQUE':'GENUÍNO') + (score!=null?('  ('+score.toFixed(2)+')'):'');
   return label;
 }
-$('#run1').onclick = classify;
+$('#run1').onclick = ()=>{
+  if(!track){ alert('Nenhuma fonte de vídeo ativa — libere e inicie a câmera na seção 1, ou use o modo dataset na seção 5.'); return; }
+  classify();
+};
 
 function runRounds(truth){
   const n = Math.max(1, Math.min(120, parseInt($('#nframes').value)||15));
+  const vid=$('#v');
+  // achado (leona 15/09): requestAnimationFrame roda na taxa do MONITOR (60-144Hz) enquanto a
+  // camera entrega ~30fps - contava o mesmo frame varias vezes e inflava a precisao do
+  // APCER/BPCER. requestVideoFrameCallback amostra frame de video real, quando disponivel.
+  const useVFC = typeof vid.requestVideoFrameCallback === 'function';
+  const schedule = useVFC ? cb=>vid.requestVideoFrameCallback(cb) : cb=>requestAnimationFrame(cb);
   let i=0;
   const step=()=>{
     const v = classify();
@@ -207,12 +233,20 @@ function runRounds(truth){
       if(truth==='genuine'){ v==='genuine'?M.tn++:M.fp++; }
       else { v==='attack'?M.tp++:M.fn++; }
     }
-    if(++i<n) requestAnimationFrame(step); else render();
+    if(++i<n) schedule(step); else { render(); roundBusy=false; }
   };
-  step();
+  schedule(step);
 }
-$('#markG').onclick = ()=>runRounds('genuine');
-$('#markA').onclick = ()=>runRounds('attack');
+$('#markG').onclick = ()=>{
+  if(roundBusy) return;   // achado (leona 15/09): sem trava, clicar GENUINO e ATAQUE em sequencia misturava dois lacos na mesma matriz
+  if(!track){ alert('Nenhuma fonte de vídeo ativa — libere e inicie a câmera na seção 1, ou use o modo dataset na seção 5.'); return; }
+  roundBusy=true; runRounds('genuine');
+};
+$('#markA').onclick = ()=>{
+  if(roundBusy) return;
+  if(!track){ alert('Nenhuma fonte de vídeo ativa — libere e inicie a câmera na seção 1, ou use o modo dataset na seção 5.'); return; }
+  roundBusy=true; runRounds('attack');
+};
 
 function render(){
   $('#tn').textContent=M.tn; $('#fp').textContent=M.fp; $('#fn').textContent=M.fn; $('#tp').textContent=M.tp;
@@ -241,7 +275,7 @@ $('#export').onclick=()=>{
 // ---- Modo dataset offline (sem OBS, sem câmera) ----
 function loadImgFromUrl(url){return new Promise((res,rej)=>{const img=new Image();img.onload=()=>res(img);img.onerror=rej;img.src=url;});}   // achado 2: URL criada e revogada por quem chama
 async function runDataset(files, truth){
-  const c=$('#c'), ctx=c.getContext('2d');
+  const c=$('#c'), ctx=c.getContext('2d', {willReadFrequently:true});
   for(const f of files){
     const objUrl=URL.createObjectURL(f);
     let img; try{ img=await loadImgFromUrl(objUrl); }catch{ URL.revokeObjectURL(objUrl); continue; }
@@ -250,7 +284,7 @@ async function runDataset(files, truth){
     ctx.drawImage(img,0,0,c.width,c.height);
     const frame=ctx.getImageData(0,0,c.width,c.height);
     URL.revokeObjectURL(objUrl);   // achado 2: revoga assim que o frame ja foi capturado no canvas
-    const out=window.detectSpoof(frame, img, null, {looksVirtual:false});
+    let out; try{ out=window.detectSpoof(frame, img, null, {looksVirtual:false}); }catch(e){ console.error('detectSpoof lançou erro no dataset:', e); out=null; }
     const v=(out&&out.label)||'genuine';
     if(truth==='genuine'){ v==='genuine'?M.tn++:M.fp++; } else { v==='attack'?M.tp++:M.fn++; }
   }
@@ -260,35 +294,39 @@ $('#dsRun').onclick=async()=>{
   const g=$('#dsG').files, a=$('#dsA').files;
   if(!g.length && !a.length){ $('#dsStatus').textContent='escolha as imagens primeiro'; return; }
   $('#dsRun').disabled=true; $('#dsStatus').textContent='rodando…';
-  await runDataset(g,'genuine'); await runDataset(a,'attack');
-  $('#dsStatus').textContent='feito: '+g.length+' genuínas + '+a.length+' ataque';
-  $('#dsRun').disabled=false;
+  try{
+    await runDataset(g,'genuine'); await runDataset(a,'attack');
+    $('#dsStatus').textContent='feito: '+g.length+' genuínas + '+a.length+' ataque';
+  } finally { $('#dsRun').disabled=false; }   // achado (leona 15/09): sem finally, um throw deixava o botao desabilitado pra sempre
 };
 
 // ---- Botão "Testar a minha foto" (arquivo minha-foto.jpg servido do mesmo local) ----
 $('#myphoto').onclick = ()=>{
   const img = new Image();
   img.onload = ()=>{
-    const c=$('#c'), ctx=c.getContext('2d');
+    const c=$('#c'), ctx=c.getContext('2d', {willReadFrequently:true});
     const w=img.naturalWidth||320;
     c.width=Math.min(320,w); c.height=Math.round(c.width*(img.naturalHeight||180)/w);
     ctx.drawImage(img,0,0,c.width,c.height);
     const frame=ctx.getImageData(0,0,c.width,c.height);
-    const out=window.detectSpoof(frame, img, null, {looksVirtual:false});
+    let out; try{ out=window.detectSpoof(frame, img, null, {looksVirtual:false}); }catch(e){ console.error('detectSpoof lançou erro:', e); out=null; }
     const v=(out&&out.label)||'genuine';
     v==='attack'?M.tp++:M.fn++;            // verdade conhecida: é ATAQUE (foto estática)
     render();
     const el=$('#verdict'); el.className='verdict '+v;
     el.textContent=(v==='attack'?'ATAQUE':'GENUÍNO')+(out&&typeof out.score==='number'?('  ('+out.score.toFixed(2)+')'):'');
-    $('#myphotoStatus').innerHTML = v==='attack'
-      ? '<span style="color:var(--ok)">detector PEGOU — correto, foto estática é ataque</span>'
-      : '<span style="color:var(--bad)">detector DEIXOU PASSAR — falhou, isso é APCER subindo</span>';
+    $('#myphotoStatus').textContent = v==='attack'
+      ? 'detector PEGOU — correto, foto estática é ataque'
+      : 'detector DEIXOU PASSAR — falhou, isso é APCER subindo';
   };
-  img.onerror=()=>{ $('#myphotoStatus').textContent='não encontrei minha-foto.jpg na pasta do bench'; };
+  // achado CRITICO 15/09 (shitara+bruna): minha-foto.jpg fica de fora do repo publico
+  // (.gitignore) de proposito — a foto pessoal do Max nao pode vazar. O botao SEMPRE cai
+  // aqui em qualquer copia publicada; a mensagem agora diz o caminho que funciona.
+  img.onerror=()=>{ $('#myphotoStatus').textContent='minha-foto.jpg não está nesta cópia — use os campos de upload abaixo para testar uma foto sua como ataque'; };
   img.src='minha-foto.jpg';
 };
 
-navigator.mediaDevices.addEventListener?.('devicechange', listCams);
+navigator.mediaDevices?.addEventListener?.('devicechange', listCams);   // achado CRITICO 15/09 (leona): so o metodo era protegido — em origem sem HTTPS, navigator.mediaDevices e undefined e o throw abortava o resto do script (inclusive o modo dataset, que nao usa camera)
 listCams();
 
 // ==========================================================================
@@ -318,6 +356,12 @@ window.detectSpoof = function(frame, videoEl, track, signals){
   const x0=Math.floor(w*0.20), x1=Math.ceil(w*0.80);
   const y0=Math.floor(h*0.20), y1=Math.ceil(h*0.80);
   const rw=x1-x0, rh=y1-y0;
+  if(rw<3 || rh<3){
+    // achado (leona 15/09): recorte degenerado (thumbnail quebrada, icone) fazia lapN=0,
+    // lapMean=NaN, score=NaN — e "NaN>0.55" e falso, entao APROVAVA como GENUINO em
+    // silencio no modo dataset. Agora e erro explicito, nao aprovacao por acidente de JS.
+    return {label:'attack', score:1, signals:{error:'frame degenerado (recorte menor que 3x3px)'}};
+  }
   const gray=new Float32Array(rw*rh);
   const sat=new Float32Array(rw*rh);
   let whiteCount=0;
@@ -354,6 +398,9 @@ window.detectSpoof = function(frame, videoEl, track, signals){
 
   // combinação simples (média ponderada); ajuste os pesos com os seus dados
   const score = Math.max(0, Math.min(1, 0.45*sharpScore + 0.35*satScore + 0.20*glareScore));
+  if(!Number.isFinite(score)){
+    return {label:'attack', score:1, signals:{error:'score não-finito (entrada inválida)'}};
+  }
   return {
     label: score>0.55 ? 'attack':'genuine',
     score,
