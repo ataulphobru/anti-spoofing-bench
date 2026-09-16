@@ -1,0 +1,779 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Autenticador Facial</title>
+<style>
+  :root{--bg:#0f1115;--card:#171a21;--line:#262b36;--ink:#e8eaed;--dim:#9aa3b2;--ok:#2ecc71;--bad:#e74c3c;--warn:#f39c12;--accent:#5b8def;}
+  *{box-sizing:border-box}
+  [hidden]{display:none !important}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,Segoe UI,Roboto,Arial,sans-serif}
+  header{padding:14px 20px;border-bottom:1px solid var(--line)}
+  header h1{margin:0 0 2px;font-size:18px}
+  header p{margin:0;color:var(--dim);font-size:13px}
+  header a{color:var(--accent)}
+  .wrap{max-width:660px;margin:0 auto;padding:16px 20px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+  .card h2{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
+  .palco{position:relative;border-radius:10px;overflow:hidden}
+  video{width:100%;border-radius:10px;background:#000;aspect-ratio:4/3;object-fit:cover;display:block;transform:scaleX(-1)}
+  /* Estilo KYC (referencia que o Max mandou, 16/09): oval tracejado branco FIXO, fundo
+     escurecido em volta, e a pessoa se aproxima ou afasta ate encaixar dentro dele. */
+  .oval{position:absolute;left:50%;top:47%;transform:translate(-50%,-50%);width:42%;height:66%;
+        border:4px dashed #fff;border-radius:50%;pointer-events:none;
+        box-shadow:0 0 0 9999px rgba(8,12,22,.42);transition:border-color .2s}
+  .oval.ok{border-color:var(--ok)}
+  .oval.gesto{border-color:var(--accent);border-style:solid;box-shadow:0 0 0 9999px rgba(8,12,22,.45)}
+  .guia{position:absolute;left:0;right:0;bottom:14px;text-align:center;font-weight:800;font-size:17px;
+        letter-spacing:.02em;color:#fff;text-shadow:0 2px 8px #000,0 0 3px #000;pointer-events:none}
+  .contador{position:absolute;left:50%;top:48%;transform:translate(-50%,-50%);font-size:60px;font-weight:900;color:#fff;text-shadow:0 3px 12px #000;pointer-events:none}
+  #ref{max-width:150px;border-radius:10px;border:1px solid var(--line);display:block}
+  .fichas{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;margin-top:10px}
+  .ficha{text-align:center}
+  .ficha small{display:block;color:var(--dim);font-size:11px;margin-top:4px}
+  .moldura{position:relative;width:132px;height:176px;border:2px solid var(--line);border-radius:8px;
+           overflow:hidden;background:#000}
+  .moldura canvas,.moldura img{width:100%;height:100%;object-fit:cover;display:block}
+  .moldura .contorno{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+  button{font:inherit;color:var(--ink);background:#1f2531;border:1px solid var(--line);border-radius:10px;padding:13px 16px;cursor:pointer}
+  button:hover{border-color:var(--accent)} button:disabled{opacity:.45;cursor:default}
+  button.big{flex:1;font-weight:700;font-size:16px;background:var(--accent);border-color:var(--accent);color:var(--bg)}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0}
+  .prompt{font-size:19px;font-weight:800;text-align:center;padding:14px;border-radius:10px;background:#1f2531;margin-top:10px}
+  .placar{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+  .placar div{background:#1f2531;border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center}
+  .placar b{display:block;font-size:19px;margin-top:2px}
+  .placar small{color:var(--dim);font-size:12px}
+  .sim{color:var(--ok)} .nao{color:var(--bad)} .ind{color:var(--dim)}
+  .final{font-size:26px;font-weight:900;text-align:center;padding:16px;border-radius:10px;background:#1f2531;margin-top:12px}
+  .final.ok{color:var(--ok)} .final.bad{color:var(--bad)}
+  .final small{display:block;font-size:13px;font-weight:600;color:var(--dim);margin-top:6px}
+  .muted{color:var(--dim);font-size:13px}
+  .mon{font-family:ui-monospace,Consolas,monospace;font-size:12.5px;line-height:1.7;background:#12161f;
+       border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--dim);white-space:pre-wrap}
+  .mon b{color:var(--ink)} .mon .s{color:var(--ok)} .mon .n{color:var(--bad)} .mon .w{color:var(--warn)}
+  details{border:1px solid var(--line);border-radius:10px;padding:10px 14px;background:var(--card)}
+  summary{cursor:pointer;color:var(--dim);font-size:13px}
+  #diag{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--dim);white-space:pre-wrap;margin-top:8px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Autenticador Facial</h1>
+  <p>As duas perguntas que um autenticador de verdade faz: <b>é a pessoa certa?</b> e <b>está viva?</b>
+     <a href="liveness.html">detector simples</a> · <a href="index.html">bancada</a></p>
+</header>
+
+<div class="wrap">
+
+  <div class="card">
+    <h2>1 · Cadastro — a foto de referência</h2>
+    <p class="muted">É o papel do documento: a foto com que o rosto ao vivo vai ser comparado.
+       Qualquer dimensão serve, o rosto é recortado sozinho.</p>
+    <div class="row">
+      <button id="btnRef">📄 Escolher foto de referência</button>
+      <span id="refInfo" class="muted">nenhuma foto cadastrada</span>
+    </div>
+    <input id="fileRef" type="file" accept="image/*" hidden>
+    <div class="row">
+      <label class="muted"><input id="autoAlinha" type="checkbox" checked> reenquadrar o rosto automaticamente</label>
+    </div>
+    <div class="fichas">
+      <div class="ficha">
+        <div class="moldura vazia"><img id="ref" alt="foto de referência"></div>
+        <small>foto enviada</small>
+      </div>
+      <div class="ficha">
+        <div class="moldura vazia"><canvas id="alinhRef" width="264" height="352"></canvas><canvas id="cRef" class="contorno" width="264" height="352"></canvas></div>
+        <small>rosto reenquadrado</small>
+      </div>
+      <div class="ficha">
+        <div class="moldura vazia"><canvas id="alinhVivo" width="264" height="352"></canvas><canvas id="cVivo" class="contorno" width="264" height="352"></canvas></div>
+        <small>seu rosto ao vivo</small>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>2 · Verificação ao vivo</h2>
+    <div class="palco">
+      <video id="v" autoplay playsinline muted></video>
+      <canvas id="malha" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;transform:scaleX(-1)"></canvas>
+      <div id="oval" class="oval" hidden></div>
+      <div id="guia" class="guia" hidden></div>
+      <div id="contador" class="contador" hidden></div>
+    </div>
+    <div class="row">
+      <button id="btnAuth" class="big" disabled>🔐 Autenticar</button>
+      <button id="btnParar">Parar câmera</button>
+    </div>
+    <div id="prompt" class="prompt">cadastre uma foto para liberar a autenticação</div>
+
+    <div class="placar">
+      <div><small>É a pessoa certa?</small><b id="pIdent" class="ind">—</b></div>
+      <div><small>Está viva?</small><b id="pVida" class="ind">—</b></div>
+    </div>
+    <div id="final" class="final" role="status" aria-live="polite">—</div>
+  </div>
+
+  <div class="card">
+    <h2>3 · Simular ataque — injetar uma foto no lugar da câmera</h2>
+    <p class="muted">É o que um atacante faz com câmera virtual: o sistema recebe uma foto parada
+       achando que é a webcam. Use a barra para aproximar ou afastar a foto até ela encaixar no oval.</p>
+    <div class="row">
+      <button id="btnFoto">🖼 Escolher foto para injetar</button>
+      <button id="btnCapturar">📸 Capturar este rosto AGORA (baixa + já simula)</button>
+      <button id="btnCam">📷 Voltar para a câmera real</button>
+    </div>
+    <input id="fileAtk" type="file" accept="image/*" hidden>
+    <div class="row">
+      <label class="muted" style="flex:1">
+        zoom da foto: <b id="zoomVal">1.00×</b><br>
+        <input id="zoom" type="range" min="0.4" max="4" step="0.02" value="1" style="width:100%">
+      </label>
+    </div>
+    <div class="row">
+      <label class="muted" style="flex:1">
+        altura: <input id="offY" type="range" min="-200" max="200" step="2" value="0" style="width:60%">
+      </label>
+    </div>
+    <div id="atkInfo" class="muted">nenhuma foto injetada — a câmera real está ativa</div>
+    <div class="row">
+      <label class="muted"><input id="monitor" type="checkbox" checked> acompanhar as medidas ao vivo</label>
+    </div>
+    <div id="aoVivo" class="mon">monitor desligado</div>
+  </div>
+
+  <details>
+    <summary>Detalhes técnicos e limites deste método</summary>
+    <p class="muted">A identidade é comparada por <b>vetor de reconhecimento facial</b> (rede
+      ResNet de 128 dimensões, a mesma família do FaceNet), rodando 100% local nesta máquina.
+      Duas fotos da mesma pessoa caem perto no espaço do vetor; pessoas diferentes caem longe.
+      O limiar usual da literatura é <b>0,6</b>.</p>
+    <p class="muted"><b>Por que não é geometria:</b> a primeira versão comparava distâncias entre os
+      pontos do MediaPipe e foi <b>medida e descartada</b> — uma foto com o rosto esticado 45% dava
+      distância <i>menor</i> que a original, porque o FaceMesh encaixa um modelo canônico de rosto e
+      corrige a proporção sozinho. Ele diz ONDE está o rosto, não QUEM é. Medição das duas: a mesma
+      foto consigo mesma dava 0,0145 de ruído na geometria e dá 0,0000 no vetor.</p>
+    <div class="row">
+      <label class="muted">limiar de identidade
+        <input id="limiar" type="range" min="0.30" max="0.90" step="0.01" value="0.60">
+        <span id="limiarVal">0.60</span>
+      </label>
+    </div>
+    <div id="diag">—</div>
+  </details>
+</div>
+
+<script src="mp/face_mesh.js"></script>
+<script src="fapi/face-api.js"></script>
+<script>
+const $=s=>document.querySelector(s);
+const perf=()=>performance.now();
+function rnd(n){const a=new Uint32Array(1);crypto.getRandomValues(a);return a[0]%n;}
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+const LEYE=[33,160,158,133,153,144], REYE=[362,385,387,263,373,380];
+const NOSE=1, LEDGE=234, REDGE=454, MOUTH_L=61, MOUTH_R=291;
+function ear1(p){return (dist(p[1],p[5])+dist(p[2],p[4]))/(2*dist(p[0],p[3])||1e-6);}
+function ear(lm){return (ear1(LEYE.map(i=>lm[i]))+ear1(REYE.map(i=>lm[i])))/2;}
+function largura(lm){return dist(lm[LEDGE],lm[REDGE])||1e-6;}
+function yaw(lm){return dist(lm[NOSE],lm[LEDGE])/(dist(lm[NOSE],lm[REDGE])||1e-6);}
+function boca(lm){return dist(lm[MOUTH_L],lm[MOUTH_R])/largura(lm);}
+
+// ---------- assinatura geométrica do rosto ----------
+// Pares escolhidos por serem estáveis a expressão: contorno, orbitas, base do nariz,
+// maçãs do rosto e queixo. Todas as distancias divididas pela largura da face, o que
+// torna a assinatura invariante a escala e a distancia da camera.
+const PARES=[[33,263],[133,362],[234,454],[10,152],[1,152],[127,356],[234,152],[454,152],
+             [33,133],[362,263],[168,1],[6,152],[93,323],[58,288],[172,397],[132,361],
+             [1,33],[1,263],[10,234],[10,454],[152,61],[152,291],[70,300],[46,276]];
+function assinatura(lm){ const w=largura(lm); return PARES.map(([a,b])=>dist(lm[a],lm[b])/w); }
+function distanciaAssinaturas(a,b){
+  let s=0; for(let i=0;i<a.length;i++){ const d=a[i]-b[i]; s+=d*d; }
+  return Math.sqrt(s/a.length);
+}
+
+// ---------- estado ----------
+let stream=null, mesh=null, pronto=false, rodando=false, raf=null, geracao=0;
+let lm=null, resolverMesh=null;
+let assRef=null, nomeRef=null;
+let enquadrado=false, desdeOk=0, guiando=false;
+let earAtual=0.3, yawAtual=1, bocaAtual=0.4;
+let piscadas=0, olhoFechado=false, limBaixo=0.19, limAlto=0.25;
+let fase=null;   // 'enquadrar' | 'gesto'
+let gesto=null;
+const linhas=[];
+function diag(m){ linhas.unshift(m); if(linhas.length>30) linhas.length=30; $('#diag').textContent=linhas.join(String.fromCharCode(10)); }
+
+const ENQ={minLarg:0.19,maxLarg:0.52,tolX:0.16,tolY:0.19,estavelMs:1000};   // calibrado no C920 do Max: webcam de mesa deixa o rosto pequeno no quadro
+function avaliarEnq(p){
+  if(!p) return {ok:false,msg:'posicione o rosto dentro do oval'};
+  let x0=1,y0=1,x1=0,y1=0;
+  for(const q of p){ if(q.x<x0)x0=q.x; if(q.x>x1)x1=q.x; if(q.y<y0)y0=q.y; if(q.y>y1)y1=q.y; }
+  const w=x1-x0, cx=(x0+x1)/2, cy=(y0+y1)/2;
+  // distancia (frente/tras) com graduacao: o Max pediu que diga QUANTO falta, nao so a direcao
+  if(w < ENQ.minLarg*0.62) return {ok:false,msg:'VENHA BEM MAIS PRA FRENTE'};
+  if(w < ENQ.minLarg)      return {ok:false,msg:'VENHA UM POUCO PRA FRENTE'};
+  if(w > ENQ.maxLarg*1.25) return {ok:false,msg:'VÁ BEM MAIS PRA TRÁS'};
+  if(w > ENQ.maxLarg)      return {ok:false,msg:'VÁ UM POUCO PRA TRÁS'};
+  // altura nao inverte no espelho, entao da para mandar subir ou descer direto
+  if(cy < 0.5-ENQ.tolY)    return {ok:false,msg:'DESÇA UM POUCO O ROSTO'};
+  if(cy > 0.5+ENQ.tolY)    return {ok:false,msg:'SUBA UM POUCO O ROSTO'};
+  if(Math.abs(cx-0.5)>ENQ.tolX) return {ok:false,msg:'CENTRALIZE o rosto no oval'};
+  return {ok:true,msg:'PERFEITO — fique parado'};
+}
+function guia(on){ guiando=on; $('#oval').hidden=!on; $('#guia').hidden=!on;
+  if(!on){ $('#contador').hidden=true; $('#oval').classList.remove('ok'); } }
+
+function motor(){
+  if(typeof FaceMesh==='undefined'){ $('#prompt').textContent='MediaPipe não carregou (confira a pasta mp/)'; return; }
+  mesh=new FaceMesh({locateFile:f=>'mp/'+f});
+  mesh.setOptions({maxNumFaces:1, refineLandmarks:true, minDetectionConfidence:0.5, minTrackingConfidence:0.5});
+  mesh.onResults(res=>{
+    if(resolverMesh){ const r=resolverMesh; resolverMesh=null; r(res); return; }
+    if(!rodando) return;
+    lm = (res.multiFaceLandmarks && res.multiFaceLandmarks[0]) || null;
+    if(lm){ earAtual=ear(lm); yawAtual=yaw(lm); bocaAtual=boca(lm); }
+    // contorno fino do rosto detectado: mostra que o sistema esta ENXERGANDO voce
+    const mc=$('#malha');
+    if(mc.width!==($('#v').videoWidth||640)){ mc.width=$('#v').videoWidth||640; mc.height=$('#v').videoHeight||480; }
+    desenharContorno(mc, lm, lm?avaliarEnq(lm).ok:false);
+    if(guiando){
+      const r=avaliarEnq(lm); enquadrado=r.ok;
+      $('#oval').classList.toggle('ok',r.ok); $('#guia').textContent=r.msg;
+      if(!r.ok){ desdeOk=0; $('#contador').hidden=true; }
+      else{
+        if(!desdeOk) desdeOk=perf();
+        const falta=Math.ceil((ENQ.estavelMs-(perf()-desdeOk))/1000);
+        if(falta>0){ $('#contador').hidden=false; $('#contador').textContent=falta; }
+        else $('#contador').hidden=true;
+      }
+    }
+    if(fase==='gesto') tickGesto();
+  });
+  pronto=true; diag('MediaPipe pronto (enquadramento e gestos)');
+  carregarReconhecimento();
+}
+
+// CONTORNO DO ROSTO (pedido do Max, 16/09): igual ao desbloqueio do celular -- a linha
+// acompanha a cabeca de verdade, seguindo os pontos do MediaPipe, em vez de uma moldura
+// parada. Estes indices sao o contorno facial (FACEMESH_FACE_OVAL).
+const CONTORNO=[10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,378,400,377,
+                152,148,176,149,150,136,172,58,132,93,234,127,162,21,54,103,67,109];
+const OLHO_E=[33,246,161,160,159,158,157,173,133,155,154,153,145,144,163,7];
+const OLHO_D=[362,398,384,385,386,387,388,466,263,249,390,373,374,380,381,382];
+const BOCA=[61,185,40,39,37,0,267,269,270,409,291,375,321,405,314,17,84,181,91,146];
+function traco(ctx,lmk,idx,larg,alt,fecha){
+  ctx.beginPath();
+  idx.forEach((i,k)=>{ const p=lmk[i]; const x=p.x*larg, y=p.y*alt;
+    k? ctx.lineTo(x,y) : ctx.moveTo(x,y); });
+  if(fecha) ctx.closePath();
+  ctx.stroke();
+}
+function desenharContorno(canvas, lmk, ok){
+  const ctx=canvas.getContext('2d');
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if(!lmk) return;
+  // Linha FINA e discreta so no contorno da cabeca -- serve de retorno visual de que o
+  // sistema esta enxergando o rosto. Nada de linha em olho e boca (o Max reprovou aquilo).
+  const cor = ok ? '#2ecc71' : '#ffffff';
+  const pts = CONTORNO.map(i=>({x:lmk[i].x*canvas.width, y:lmk[i].y*canvas.height}));
+  ctx.save();
+  ctx.lineJoin='round'; ctx.lineCap='round'; ctx.strokeStyle=cor;
+  ctx.globalAlpha=ok?0.95:0.6;
+  ctx.lineWidth=Math.max(1.5, canvas.width/420);
+  ctx.shadowColor='rgba(0,0,0,.7)'; ctx.shadowBlur=3;
+  ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y);
+  for(let i=0;i<pts.length;i++){
+    const a=pts[i], b=pts[(i+1)%pts.length];
+    ctx.quadraticCurveTo(a.x,a.y,(a.x+b.x)/2,(a.y+b.y)/2);
+  }
+  ctx.closePath(); ctx.stroke();
+  ctx.restore();
+}
+
+
+
+
+// ALINHAMENTO FACIAL (pedido do Max, 16/09): em vez de a pessoa se ajeitar para caber na
+// moldura, o rosto e reenquadrado sozinho -- gira ate os olhos ficarem na horizontal, ajusta
+// a escala pela distancia entre eles e centraliza no formato 3x4. Alem de ficar igual a foto
+// de documento, isso MELHORA a comparacao: os dois rostos entram no reconhecedor na mesma
+// posicao, entao a diferenca que sobra e a pessoa, nao o enquadramento.
+const ALVO={larg:264, alt:352, olhosY:0.38, entreOlhos:0.34};
+function centroOlho(lm, idx){
+  let x=0,y=0; for(const i of idx){ x+=lm[i].x; y+=lm[i].y; }
+  return {x:x/idx.length, y:y/idx.length};
+}
+function alinharRosto(fonte, lmk, destino){
+  const fw = fonte.videoWidth || fonte.naturalWidth || fonte.width;
+  const fh = fonte.videoHeight || fonte.naturalHeight || fonte.height;
+  const e1=centroOlho(lmk,LEYE), e2=centroOlho(lmk,REYE);
+  const p1={x:e1.x*fw, y:e1.y*fh}, p2={x:e2.x*fw, y:e2.y*fh};
+  const dOlhos=Math.hypot(p2.x-p1.x, p2.y-p1.y) || 1;
+  const ang=Math.atan2(p2.y-p1.y, p2.x-p1.x);
+  const escala=(ALVO.entreOlhos*ALVO.larg)/dOlhos;
+  const meio={x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2};
+  const c=destino||document.createElement('canvas');
+  c.width=ALVO.larg; c.height=ALVO.alt;
+  const x=c.getContext('2d');
+  x.save(); x.fillStyle='#000'; x.fillRect(0,0,c.width,c.height);
+  x.translate(ALVO.larg/2, ALVO.alt*ALVO.olhosY);   // onde os olhos devem ficar
+  x.rotate(-ang);                                    // endireita
+  x.scale(escala, escala);                           // padroniza o tamanho
+  x.translate(-meio.x, -meio.y);                     // traz o meio dos olhos para a marca
+  x.drawImage(fonte, 0, 0, fw, fh);
+  x.restore();
+  return c;
+}
+// devolve os landmarks do MediaPipe para uma imagem parada (usado no cadastro)
+async function pontosDe(img){
+  return new Promise(ok=>{ resolverMesh = res => {
+    ok((res && res.multiFaceLandmarks && res.multiFaceLandmarks[0]) || null);
+  }; mesh.send({image:img}).catch(()=>{ resolverMesh=null; ok(null); }); });
+}
+
+let reconhecePronto=false;
+async function carregarReconhecimento(){
+  try{
+    if(typeof faceapi==='undefined'){ diag('face-api nao carregou (confira a pasta fapi/)'); return; }
+    await faceapi.nets.ssdMobilenetv1.loadFromUri('fapi');
+    await faceapi.nets.faceLandmark68Net.loadFromUri('fapi');
+    await faceapi.nets.faceRecognitionNet.loadFromUri('fapi');
+    reconhecePronto=true; diag('reconhecimento facial pronto (vetor de 128 dimensoes, local)');
+  }catch(e){ diag('falha no reconhecimento: '+e.message); }
+}
+// vetor de identidade de uma imagem ou do proprio video
+async function vetorDe(fonte){
+  if(!reconhecePronto) return null;
+  const r = await faceapi.detectSingleFace(fonte).withFaceLandmarks().withFaceDescriptor();
+  return r ? r.descriptor : null;
+}
+window.vetorDe = vetorDe;
+window.distanciaVetores = (a,b)=>faceapi.euclideanDistance(a,b);
+
+async function ligar(){
+  if(stream) return true;
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'user'},width:{ideal:1280}}});
+    $('#v').srcObject=stream; await $('#v').play().catch(()=>{});
+    rodando=true; const g=++geracao; bombear(g);
+    diag('câmera: '+(stream.getVideoTracks()[0].label||'?'));
+    return true;
+  }catch(e){ $('#prompt').textContent='não consegui abrir a câmera: '+e.message; return false; }
+}
+async function bombear(g){
+  if(!rodando||g!==geracao) return;
+  try{ await mesh.send({image:$('#v')}); }catch(e){}
+  if(!rodando||g!==geracao) return;
+  raf=requestAnimationFrame(()=>bombear(g));
+}
+function desligar(){ rodando=false; geracao++; fase=null; guia(false);
+  if(raf){cancelAnimationFrame(raf);raf=null;}
+  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;$('#v').srcObject=null;} }
+
+// ---------- 1. cadastro ----------
+$('#btnRef').onclick=()=>{ if(!pronto){ $('#prompt').textContent='o motor de rosto ainda não carregou'; return; } $('#fileRef').click(); };
+$('#fileRef').onchange=async(e)=>{
+  const f=e.target.files&&e.target.files[0]; if(!f) return; e.target.value='';
+  const url=URL.createObjectURL(f);
+  try{
+    const img=new Image();
+    await new Promise((ok,err)=>{img.onload=ok;img.onerror=()=>err(new Error('não consegui abrir essa imagem'));img.src=url;});
+    if(!reconhecePronto){ $('#refInfo').textContent='o reconhecimento ainda está carregando, tente em instantes'; return; }
+    let fonteParaVetor = img;
+    if($('#autoAlinha').checked){
+      const pts = await pontosDe(img);
+      if(pts){
+        alinharRosto(img, pts, $('#alinhRef'));
+        const ptsAl = await pontosDe($('#alinhRef'));
+        desenharContorno($('#cRef'), ptsAl, true);
+        $('#alinhRef').parentElement.classList.remove('vazia');
+        fonteParaVetor = $('#alinhRef');
+        diag('rosto da referência reenquadrado automaticamente');
+      } else diag('não consegui reenquadrar (sem rosto) — usando a foto inteira');
+    }
+    const a=await vetorDe(fonteParaVetor);
+    if(!a){ $('#refInfo').textContent='não achei um rosto nessa foto'; return; }
+    assRef=a; nomeRef=f.name;
+    $('#ref').src=url; $('#ref').parentElement.classList.remove('vazia');
+    $('#refInfo').textContent='cadastrado: '+f.name;
+    $('#btnAuth').disabled=false;
+    $('#prompt').textContent='pronto — clique em Autenticar';
+    diag('referência cadastrada: '+f.name+' (vetor de '+assRef.length+' dimensões)');
+  }catch(err){ $('#refInfo').textContent=err.message; }
+};
+
+// ---------- 2. autenticação ----------
+const GESTOS=[{k:'piscar',r:'PISQUE 2 VEZES',n:2},{k:'esquerda',r:'VIRE A CABEÇA PARA A ESQUERDA'},
+              {k:'direita',r:'VIRE A CABEÇA PARA A DIREITA'},{k:'sorrir',r:'SORRIA'}];
+const PRAZO=25000;
+
+$('#btnAuth').onclick=async()=>{
+  if(!assRef){ $('#prompt').textContent='cadastre uma foto primeiro'; return; }
+  $('#btnAuth').disabled=true;
+  try{
+    if(!await ligar()) return;
+    $('#pIdent').className='ind'; $('#pIdent').textContent='—';
+    $('#pVida').className='ind';  $('#pVida').textContent='—';
+    $('#final').className='final'; $('#final').textContent='—';
+
+    // --- enquadrar ---
+    fase='enquadrar'; desdeOk=0; guia(true);
+    $('#prompt').textContent='encaixe o rosto no oval';
+    const lim=perf()+20000;
+    let enquadrouBem=false;
+    while(perf()<lim){
+      if(enquadrado && desdeOk && perf()-desdeOk>=ENQ.estavelMs){ enquadrouBem=true; break; }
+      await new Promise(r=>setTimeout(r,80));
+    }
+    // FURO APONTADO PELO MAX (16/09): antes, se os 20s acabassem sem encaixar, o codigo media
+    // o rosto assim mesmo. Medir rosto mal enquadrado NAO e reconhecimento -- a distancia sai
+    // sem valor e pode acusar "pessoa diferente" para a pessoa certa. Medido nesta bancada: o
+    // mesmo rosto inclinado 20 graus vai de 0,057 para 0,414 (limiar 0,60) so pelo enquadramento.
+    if(!enquadrouBem){
+      guia(false);
+      const motivo = lm ? ($('#guia').textContent||'o rosto não ficou na posição') : 'não consegui ver seu rosto';
+      $('#prompt').textContent='não deu pra enquadrar: '+motivo+' — clique em Autenticar e tente de novo';
+      $('#final').className='final'; $('#final').innerHTML='—<small>medição cancelada: sem enquadramento não dá para reconhecer</small>';
+      diag('ABORTADO: enquadramento nao concluido em 20s ('+motivo+') — nao medi nada');
+      return;
+    }
+    guiando=true; $('#oval').hidden=false;   // mantem o oval como referencia durante o gesto
+
+    // --- pergunta 1: é a pessoa certa? ---
+    let fonteVivo = $('#v');
+    if($('#autoAlinha').checked && lm){
+      alinharRosto($('#v'), lm, $('#alinhVivo'));
+      const ptsAlV = await pontosDe($('#alinhVivo'));
+      desenharContorno($('#cVivo'), ptsAlV, true);
+      $('#alinhVivo').parentElement.classList.remove('vazia');
+      fonteVivo = $('#alinhVivo');
+      diag('rosto ao vivo reenquadrado automaticamente');
+    }
+    const vAoVivo = await vetorDe(fonteVivo);
+    if(!vAoVivo){ $('#prompt').textContent='não consegui medir seu rosto — tente de novo'; return; }
+    const fonte = sinalDaFonte();
+    if(fonte) diag('fonte do vídeo: '+fonte.rotulo+' '+fonte.resolucao+(fonte.virtual?' -> CÂMERA VIRTUAL':' -> parece câmera física'));
+    const mold = sinalDeMoldura($('#v'), lm);
+    if(mold) diag('moldura em volta do rosto: linha reta horizontal='+mold.fracH+' vertical='+mold.fracV+' -> nota '+mold.nota);
+    const d=window.distanciaVetores(assRef, vAoVivo);
+    const limiar=parseFloat($('#limiar').value);
+    const mesma = d<=limiar;
+    $('#pIdent').className=mesma?'sim':'nao';
+    $('#pIdent').textContent=mesma?'SIM':'NÃO';
+    diag('identidade: distância='+d.toFixed(4)+' limiar='+limiar.toFixed(2)+' -> '+(mesma?'mesma pessoa':'pessoa diferente'));
+
+    // --- pergunta 2: está viva? ---
+    const g=GESTOS[rnd(GESTOS.length)];
+    piscadas=0; olhoFechado=false;
+    const amostras=[]; const fimCal=perf()+900;
+    while(perf()<fimCal){ if(lm) amostras.push(earAtual); await new Promise(r=>setTimeout(r,33)); }
+    if(amostras.length>=8){ amostras.sort((a,b)=>a-b);
+      const aberto=amostras[Math.floor(amostras.length/2)];
+      limBaixo=Math.max(0.10,aberto*0.62); limAlto=Math.max(limBaixo+0.03,aberto*0.80);
+    }
+    gesto={k:g.k,n:g.n||0,baseYaw:yawAtual||1,baseBoca:bocaAtual||0.4,prazo:perf()+PRAZO,inicio:perf(),feito:null};
+    $('#prompt').textContent=g.r;
+    fase='gesto'; $('#oval').classList.add('gesto'); $('#guia').textContent='mantenha o rosto no oval';
+    diag('gesto sorteado: '+g.k);
+    while(gesto.feito===null && perf()<gesto.prazo+400){ await new Promise(r=>setTimeout(r,60)); }
+    fase=null; $('#oval').classList.remove('gesto');
+    const vivo = gesto.feito===true;
+    $('#pVida').className=vivo?'sim':'nao';
+    $('#pVida').textContent=vivo?'SIM':'NÃO';
+    diag('vivacidade: '+(vivo?'cumpriu o gesto':'não cumpriu')+' (piscadas='+piscadas+')');
+
+    // --- veredito: precisa das DUAS ---
+    // camera virtual reprova mesmo com identidade e vida OK: e o unico jeito de barrar quem
+    // injeta um VIDEO de verdade da pessoa certa, que passaria nos dois testes anteriores.
+    const fonteOk = !(fonte && fonte.virtual);
+    const aprovado = mesma && vivo && fonteOk;
+    const el=$('#final'); el.className='final '+(aprovado?'ok':'bad');
+    let porque;
+    if(aprovado) porque='rosto confere com a referência, provou vida e o vídeo vem de câmera física';
+    else if(mesma && vivo && !fonteOk) porque='passou nos dois testes, MAS o vídeo vem de câmera virtual';
+    else if(!mesma && !vivo) porque='não é a pessoa da referência e também não provou vida';
+    else if(!mesma) porque='está vivo, mas não é a pessoa da foto de referência';
+    else porque='é a pessoa certa, mas não provou vida — pode ser uma foto dela';
+    const avisoMold = (mold && mold.nota>0.5) ? '<br><b style="color:var(--warn)">⚑ moldura reta em volta do rosto (nota '+mold.nota+') — cara de foto ou tela</b>' : '';
+    const avisoFonte = (fonte && fonte.virtual) ? '<br><b style="color:var(--bad)">⚑ o vídeo vem de uma CÂMERA VIRTUAL ('+fonte.rotulo+') — sinal de injeção pelo computador</b>' : '';
+    const profFinal = medirProfundidade($('#v'), lm, yawAtual);
+    const avisoProf = (profFinal && profFinal.pronto && profFinal.correlacao<0.5)
+      ? '<br><b style="color:var(--warn)">⚑ sombra não acompanha o giro (correlação '+profFinal.correlacao+') — indício de rosto 2D/colado, informativo</b>' : '';
+    el.innerHTML=(aprovado?'✔ ACESSO LIBERADO':'✖ ACESSO NEGADO')+
+      '<small>'+porque+'<br>distância de identidade '+d.toFixed(4)+' (limiar '+limiar.toFixed(2)+') · gesto: '+g.k+avisoMold+avisoFonte+avisoProf+'</small>';
+    guia(false);
+    $('#prompt').textContent='clique em Autenticar para testar de novo';
+  } finally { $('#btnAuth').disabled=!assRef; }
+};
+
+function tickGesto(){
+  if(!gesto||gesto.feito!==null) return;
+  if(earAtual<limBaixo && !olhoFechado) olhoFechado=true;
+  else if(earAtual>limAlto && olhoFechado){ olhoFechado=false; piscadas++; }
+  let ok=false;
+  if(gesto.k==='piscar')   ok=piscadas>=gesto.n;
+  if(gesto.k==='esquerda') ok=(yawAtual/gesto.baseYaw)>1.30;
+  if(gesto.k==='direita')  ok=(yawAtual/gesto.baseYaw)<0.77;
+  if(gesto.k==='sorrir')   ok=(bocaAtual/gesto.baseBoca)>1.12;
+  if(ok){ gesto.feito=true; return; }
+  if(perf()>gesto.prazo) gesto.feito=false;
+}
+
+// Ponto de teste: permite medir a assinatura de uma imagem sem passar pela interface.
+// Existe porque 'resolverMesh' e variavel de modulo -- de fora, window.resolverMesh seria
+// outra coisa, e o teste travava esperando uma promessa que nunca resolvia.
+// MEDIDO 16/09: sem staticImageMode, o FaceMesh trata cada envio como quadro de VIDEO e
+// suaviza usando o anterior. Em foto parada isso envenenava a medida -- a mesma imagem dava
+// distancias diferentes, e uma foto com o rosto deformado 45% chegou a dar distancia MENOR
+// que a propria original. Para imagem parada o modo estatico e obrigatorio.
+async function medirImagemEstatica(img){
+  await mesh.setOptions({staticImageMode:true, maxNumFaces:1, refineLandmarks:true,
+                         minDetectionConfidence:0.5, minTrackingConfidence:0.5});
+  const a = await new Promise(ok=>{ resolverMesh = res => {
+      const p = res && res.multiFaceLandmarks && res.multiFaceLandmarks[0];
+      ok(p ? assinatura(p) : null);
+    }; mesh.send({image:img}).catch(()=>{ resolverMesh=null; ok(null); }); });
+  await mesh.setOptions({staticImageMode:false, maxNumFaces:1, refineLandmarks:true,
+                         minDetectionConfidence:0.5, minTrackingConfidence:0.5});
+  return a;
+}
+window.medirImagem = medirImagemEstatica;
+window.compararAssinaturas = distanciaAssinaturas;
+window.__estado = ()=>({lm, enquadrado, guia:$('#guia').textContent, aval: lm?avaliarEnq(lm):null});
+
+// ---------- SINAL DE PROFUNDIDADE: sombra tem que acompanhar o giro (16/09) ----------
+// Visto AO VIVO no print do Max: o DeepFaceLive (modelo 2D, sem malha 3D) falhou exatamente
+// quando o rosto girou -- a pele trocada ficou lisa e a sombra nao seguiu o angulo. Rosto real
+// girando muda de brilho de um lado pro outro de forma FISICA e PROPORCIONAL ao giro (luz vem
+// de um lado so); rosto colado em 2D nao acompanha isso, ou trava quando o modelo nao aguenta
+// o angulo. Mede a correlacao entre yaw (giro) e a diferenca de brilho bochecha esquerda x
+// direita numa janela recente -- SEM modelo novo, so pixel + landmark que ja temos.
+const BOCHECHA_E=[50], BOCHECHA_D=[280];
+let profJanela=[];   // {yaw, assimetria}
+function brilhoRegiao(fonte, lmk, idxs, fw, fh){
+  const c=window.__profCanvas || (window.__profCanvas=document.createElement('canvas'));
+  if(c.width!==fw||c.height!==fh){ c.width=fw; c.height=fh; }
+  const x=c.getContext('2d',{willReadFrequently:true});
+  x.drawImage(fonte,0,0,fw,fh);
+  let soma=0,n=0;
+  for(const i of idxs){
+    const px=Math.round(lmk[i].x*fw), py=Math.round(lmk[i].y*fh);
+    const r=6, x0=Math.max(0,px-r), y0=Math.max(0,py-r);
+    const d=x.getImageData(x0,y0,Math.min(r*2,fw-x0),Math.min(r*2,fh-y0)).data;
+    for(let k=0;k<d.length;k+=4){ soma+=0.299*d[k]+0.587*d[k+1]+0.114*d[k+2]; n++; }
+  }
+  return n?soma/n:null;
+}
+function medirProfundidade(fonte, lmk, yawAtualVal){
+  const fw=fonte.videoWidth||fonte.naturalWidth||fonte.width;
+  const fh=fonte.videoHeight||fonte.naturalHeight||fonte.height;
+  const be=brilhoRegiao(fonte,lmk,BOCHECHA_E,fw,fh), bd=brilhoRegiao(fonte,lmk,BOCHECHA_D,fw,fh);
+  if(be==null||bd==null) return null;
+  const assimetria=be-bd;
+  profJanela.push({yaw:yawAtualVal, assimetria});
+  if(profJanela.length>24) profJanela.shift();
+  if(profJanela.length<10) return {pronto:false, amostras:profJanela.length};
+  const ys=profJanela.map(p=>p.yaw), as=profJanela.map(p=>p.assimetria);
+  const my=ys.reduce((s,v)=>s+v,0)/ys.length, ma=as.reduce((s,v)=>s+v,0)/as.length;
+  let num=0,dy=0,da=0;
+  for(let i=0;i<ys.length;i++){ const x=ys[i]-my, y=as[i]-ma; num+=x*y; dy+=x*x; da+=y*y; }
+  const den=Math.sqrt(dy*da);
+  const corr = den>1e-6 ? num/den : 0;
+  return {pronto:true, correlacao:+corr.toFixed(2), amostras:profJanela.length};
+}
+window.medirProfundidade = medirProfundidade;
+
+// ---------- SINAL DE FONTE: a unica defesa que enxerga INJECAO pelo computador ----------
+// Ponto do Max (16/09): ataque feito PELO COMPUTADOR (camera virtual) nao tem moldura, nem mao,
+// nem borda de papel -- a imagem chega limpa, e textura e contexto ficam CEGOS. Contra isso
+// sobram dois sinais: prova de vida (a foto nao pisca) e a PROCEDENCIA do sinal de video.
+const VIRTUAIS=/obs|virtual|droidcam|splitcam|manycam|xsplit|snap|akvcam|unity|camtwist|epoccam|iriun|e2esoft|vcam/i;
+function sinalDaFonte(){
+  if(!stream) return null;
+  const t=stream.getVideoTracks()[0]; if(!t) return null;
+  const rot=t.label||'';
+  const st=t.getSettings?t.getSettings():{};
+  const suspeita = VIRTUAIS.test(rot.toLowerCase());
+  return {rotulo: rot||'(sem rótulo)', virtual: suspeita, resolucao:(st.width||'?')+'x'+(st.height||'?')};
+}
+window.sinalDaFonte=sinalDaFonte;
+
+// ---------- SINAL DE MOLDURA: olhar EM VOLTA do rosto (ponto do Max, 16/09) ----------
+// Um autenticador de verdade nao analisa so o rosto recortado. Foto impressa, tela de celular
+// e print tem BORDA RETA em volta -- a folha, a moldura do aparelho, a mao segurando. Cena real
+// tem bordas tambem (parede, movel), mas raramente formando um retangulo fechado ao redor da
+// cabeca. Este sinal procura linhas retas longas no anel em volta do rosto.
+function sinalDeMoldura(fonte, lmk){
+  const fw=fonte.videoWidth||fonte.naturalWidth||fonte.width;
+  const fh=fonte.videoHeight||fonte.naturalHeight||fonte.height;
+  if(!fw||!fh||!lmk) return null;
+  const c=window.__molCanvas || (window.__molCanvas=document.createElement('canvas'));
+  const W=240, H=Math.round(240*fh/fw); c.width=W; c.height=H;
+  const x=c.getContext('2d',{willReadFrequently:true});
+  x.drawImage(fonte,0,0,W,H);
+  const d=x.getImageData(0,0,W,H).data;
+  const cinza=new Float32Array(W*H);
+  for(let i=0,p=0;i<d.length;i+=4,p++) cinza[p]=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+  // caixa do rosto nas coordenadas reduzidas
+  let x0=1,y0=1,x1=0,y1=0;
+  for(const q of lmk){ if(q.x<x0)x0=q.x; if(q.x>x1)x1=q.x; if(q.y<y0)y0=q.y; if(q.y>y1)y1=q.y; }
+  const rx0=x0*W, rx1=x1*W, ry0=y0*H, ry1=y1*H;
+  const dentro=(px,py)=> px>rx0-4 && px<rx1+4 && py>ry0-4 && py<ry1+4;
+  // varre linhas horizontais e verticais FORA do rosto e mede o maior segmento continuo de borda
+  let melhorH=0, melhorV=0;
+  const LIM=26;   // intensidade de borda
+  for(let y=1;y<H-1;y++){
+    let seq=0;
+    for(let px=1;px<W-1;px++){
+      if(dentro(px,y)){ seq=0; continue; }
+      const g=Math.abs(cinza[y*W+px+1]-cinza[y*W+px-1]) + Math.abs(cinza[(y+1)*W+px]-cinza[(y-1)*W+px]);
+      if(g>LIM){ seq++; if(seq>melhorH) melhorH=seq; } else seq=0;
+    }
+  }
+  for(let px=1;px<W-1;px++){
+    let seq=0;
+    for(let y=1;y<H-1;y++){
+      if(dentro(px,y)){ seq=0; continue; }
+      const g=Math.abs(cinza[y*W+px+1]-cinza[y*W+px-1]) + Math.abs(cinza[(y+1)*W+px]-cinza[(y-1)*W+px]);
+      if(g>LIM){ seq++; if(seq>melhorV) melhorV=seq; } else seq=0;
+    }
+  }
+  const fracH=melhorH/W, fracV=melhorV/H;
+  // nota 0..1: linha reta longa nas DUAS direcoes em volta = cara de moldura
+  const nota=Math.max(0,Math.min(1,(Math.min(fracH,fracV)-0.25)/0.45));
+  return {fracH:+fracH.toFixed(2), fracV:+fracV.toFixed(2), nota:+nota.toFixed(2)};
+}
+window.sinalDeMoldura = sinalDeMoldura;
+
+// ---------- simulacao de ataque por injecao, com zoom ajustavel ----------
+// Pedido do Max (16/09): barra para aproximar/afastar a foto ate ela encaixar no oval. Calcular
+// a escala na conta nao funcionou -- o quanto o rosto ocupa varia demais de foto para foto
+// (nesta, 21% da largura, nao os 45% que eu estimei). Com a barra, quem olha ajusta.
+let atkImg=null, atkStream=null, atkTimer=null, camReal=null;
+function pintaAtaque(){
+  if(!atkImg) return;
+  const c=window.__atkCanvas, x=c.getContext('2d');
+  const z=parseFloat($('#zoom').value), dy=parseFloat($('#offY').value);
+  const base=c.width/atkImg.width;
+  const w=atkImg.width*base*z, h=atkImg.height*base*z;
+  // FUNDO (pedido do Max, 16/09): quando o zoom encolhe a foto pra caber o rosto no oval,
+  // sobrava barra lateral em cor lisa. Preenche o canvas inteiro com uma copia BORRADA e
+  // AMPLIADA (estilo cover) da mesma foto por baixo, e desenha a foto nitida por cima, na
+  // escala certa. So cosmetico -- a regiao do rosto usada pra medir fica identica, porque o
+  // desenho nitido acima cobre exatamente a mesma area de antes.
+  const coverEsc=Math.max(c.width/atkImg.width, c.height/atkImg.height)*1.15;
+  const cw=atkImg.width*coverEsc, ch=atkImg.height*coverEsc;
+  x.save();
+  x.filter='blur(9px) brightness(0.82)';
+  x.drawImage(atkImg,(c.width-cw)/2,(c.height-ch)/2,cw,ch);
+  x.restore();
+  x.drawImage(atkImg,(c.width-w)/2,(c.height-h)/2+dy,w,h);
+}
+function medirRostoAtual(){
+  const e=window.__estado?window.__estado():null;
+  if(!e||!e.lm) return null;
+  const xs=e.lm.map(q=>q.x);
+  return +(Math.max(...xs)-Math.min(...xs)).toFixed(3);
+}
+async function carregarFotoDeAtaque(img, origem){
+  atkImg=img;
+  const v=$('#v');
+  if(!window.__atkCanvas){ const c=document.createElement('canvas'); c.width=640;c.height=480; window.__atkCanvas=c; }
+  if(v.srcObject && v.srcObject.getTracks && !camReal) camReal=v.srcObject;
+  if(camReal) camReal.getTracks().forEach(t=>t.enabled=false);
+  pintaAtaque();
+  if(atkTimer) clearInterval(atkTimer);
+  atkTimer=setInterval(pintaAtaque,66);
+  atkStream=window.__atkCanvas.captureStream(15);
+  v.srcObject=atkStream; rodando=true; await v.play().catch(()=>{});
+  const g=++geracao; bombear(g);
+  $('#atkInfo').innerHTML='<b style="color:var(--warn)">foto injetada:</b> '+origem+' — ajuste o zoom até o oval ficar verde';
+  diag('ATAQUE simulado: foto '+origem+' injetada no lugar da camera');
+}
+$('#btnFoto').onclick=()=>$('#fileAtk').click();
+$('#fileAtk').onchange=async(e)=>{
+  const f=e.target.files&&e.target.files[0]; if(!f) return; e.target.value='';
+  const url=URL.createObjectURL(f);
+  const img=new Image();
+  await new Promise(ok=>{img.onload=ok;img.src=url;});
+  await carregarFotoDeAtaque(img, f.name);
+};
+// CAPTURA AO VIVO (pedido do Max, 16/09): filmar a pessoa de verdade AGORA, guardar o quadro
+// como arquivo (baixa sozinho), e ja carregar na hora no simulador -- sem precisar reabrir a
+// pessoa depois so pra tirar a foto de novo. So funciona enquanto a CAMERA REAL esta mostrando
+// alguem (nao faz sentido "capturar" um ataque ja em andamento).
+$('#btnCapturar').onclick=async()=>{
+  const v=$('#v');
+  if(!rodando || !v.videoWidth){ $('#atkInfo').textContent='ligue a câmera real primeiro (clique em Autenticar) e posicione a pessoa'; return; }
+  if(atkImg){ $('#atkInfo').textContent='volte para a câmera real antes de capturar um novo rosto'; return; }
+  const cw=v.videoWidth, ch=v.videoHeight;
+  const cap=document.createElement('canvas'); cap.width=cw; cap.height=ch;
+  cap.getContext('2d').drawImage(v,0,0,cw,ch);
+  const nome='captura-'+Date.now()+'.jpg';
+  const dataUrl=cap.toDataURL('image/jpeg',0.92);
+  const a=document.createElement('a'); a.href=dataUrl; a.download=nome; a.click();   // guarda no disco
+  const img=new Image();
+  await new Promise(ok=>{img.onload=ok; img.src=dataUrl;});
+  await carregarFotoDeAtaque(img, nome+' (capturado ao vivo agora)');
+};
+$('#zoom').oninput=()=>{ $('#zoomVal').textContent=parseFloat($('#zoom').value).toFixed(2)+'×';
+  const m=medirRostoAtual(); if(m) $('#atkInfo').textContent='rosto ocupa '+m+' da largura (faixa aceita: '+ENQ.minLarg+' a '+ENQ.maxLarg+')'; };
+$('#offY').oninput=()=>{ const m=medirRostoAtual(); if(m) $('#atkInfo').textContent='rosto ocupa '+m+' da largura (faixa aceita: '+ENQ.minLarg+' a '+ENQ.maxLarg+')'; };
+$('#btnCam').onclick=async()=>{
+  if(atkTimer){ clearInterval(atkTimer); atkTimer=null; }
+  atkImg=null; atkStream=null;
+  const v=$('#v');
+  if(camReal){ camReal.getTracks().forEach(t=>t.enabled=true); v.srcObject=camReal; await v.play().catch(()=>{}); }
+  else { stream=null; await ligar(); }
+  $('#atkInfo').textContent='câmera real ativa de novo';
+  diag('voltou para a camera real');
+};
+
+// MONITOR AO VIVO (pedido do Max, 16/09): acompanhar as medidas ENQUANTO ajusta a foto,
+// em vez de so descobrir no veredito. Roda a cada 700ms e nao interfere no fluxo principal.
+let monTimer=null;
+async function tickMonitor(){
+  const el=$('#aoVivo');
+  if(!$('#monitor').checked){ el.textContent='monitor desligado'; return; }
+  if(!rodando || !lm){ el.innerHTML='<b>rosto:</b> <span class="n">não encontrado</span>'; return; }
+  const xs=lm.map(q=>q.x), ys=lm.map(q=>q.y);
+  const larg=Math.max(...xs)-Math.min(...xs);
+  const av=avaliarEnq(lm);
+  const fonte=sinalDaFonte();
+  let linhas=[];
+  linhas.push('<b>rosto:</b> <span class="s">encontrado</span>');
+  linhas.push('<b>largura:</b> '+larg.toFixed(3)+'  (faixa '+ENQ.minLarg+'–'+ENQ.maxLarg+') '+
+    (larg>=ENQ.minLarg&&larg<=ENQ.maxLarg?'<span class="s">ok</span>':'<span class="w">fora</span>'));
+  linhas.push('<b>enquadrado:</b> '+(av.ok?'<span class="s">SIM</span>':'<span class="w">não — '+av.msg+'</span>'));
+  if(fonte) linhas.push('<b>fonte:</b> '+fonte.rotulo+' '+(fonte.virtual?'<span class="n">CÂMERA VIRTUAL</span>':'<span class="s">física</span>'));
+  const mold=sinalDeMoldura($('#v'), lm);
+  if(mold) linhas.push('<b>moldura em volta:</b> nota '+mold.nota+' '+(mold.nota>0.5?'<span class="w">cara de foto/tela</span>':'<span class="s">sem moldura</span>'));
+  const prof=medirProfundidade($('#v'), lm, yawAtual);
+  if(prof){ if(!prof.pronto) linhas.push('<b>profundidade:</b> coletando… ('+prof.amostras+'/10)');
+    else linhas.push('<b>profundidade (sombra x giro):</b> correlação '+prof.correlacao+' '+
+      (prof.correlacao>=0.5?'<span class="s">acompanha o giro</span>':'<span class="w">não acompanha — pode ser 2D/colado</span>')+
+      ' <i>[pega descuido, não pega ataque dedicado]</i>'); }
+  if(assRef && reconhecePronto){
+    try{
+      const vv=await vetorDe($('#v'));
+      if(vv){ const dd=window.distanciaVetores(assRef,vv); const lim=parseFloat($('#limiar').value);
+        linhas.push('<b>distância p/ a referência:</b> '+dd.toFixed(4)+' (limiar '+lim.toFixed(2)+') '+
+          (dd<=lim?'<span class="s">MESMA PESSOA</span>':'<span class="n">pessoa diferente</span>')); }
+    }catch(e){}
+  } else linhas.push('<b>identidade:</b> cadastre uma foto de referência para comparar');
+  el.innerHTML=linhas.join(String.fromCharCode(10));
+}
+function ligarMonitor(){ if(monTimer) clearInterval(monTimer); monTimer=setInterval(tickMonitor,700); }
+$('#monitor').onchange=()=>{ if(!$('#monitor').checked) $('#aoVivo').textContent='monitor desligado'; };
+ligarMonitor();
+
+$('#btnParar').onclick=()=>{ desligar(); $('#prompt').textContent='câmera desligada'; };
+$('#limiar').oninput=e=>{ $('#limiarVal').textContent=parseFloat(e.target.value).toFixed(2); };
+
+if(document.readyState!=='loading') motor(); else addEventListener('DOMContentLoaded', motor);
+</script>
+</body>
+</html>
