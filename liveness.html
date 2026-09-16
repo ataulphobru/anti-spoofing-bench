@@ -402,9 +402,16 @@ function tickChallenge(){
   if(staticDet.isStatic()){ finish(false,'rosto sem movimento (imagem estática)'); return; }
 
   if(step.key==='blink' || step.key==='smile'){
-    // salto brusco de movimento nestes passos = corte entre fotos trocadas, não gesto real
+    // salto brusco de movimento nestes passos = corte entre fotos trocadas, não gesto real.
+    // achado MEDIDO AO VIVO 16/09 pelo Max: sem piso absoluto, o gatilho relativo (×8) cai
+    // abaixo do FLOOR=0.006 que este mesmo arquivo usa pra dizer "isto está parado" (linha
+    // acima) quando a mediana recente já está baixa — reprovou o Max piscando normalmente
+    // com movimento(norm) medido em 0.0507 no diagnóstico. CUT_ABS é folga sobre esse valor
+    // medido, não uma segunda medição — se ainda disparar em gesto normal, suba o número
+    // olhando o campo "movimento(norm)" no diagnóstico durante o piscar.
+    const CUT_ABS=0.10;
     const priorMed=rollingMedian(motionHist.slice(0,-1));
-    if(priorMed>1e-6 && motionInst>priorMed*8){ finish(false,'salto de movimento (possível troca de foto)'); return; }
+    if(priorMed>1e-6 && motionInst>Math.max(priorMed*8, CUT_ABS)){ finish(false,'salto de movimento (possível troca de foto)'); return; }
   }
   if(step.key==='left' || step.key==='right'){
     const last=challenge.yawTrace[challenge.yawTrace.length-1];
