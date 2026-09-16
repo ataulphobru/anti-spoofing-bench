@@ -339,6 +339,12 @@ $('#go').onclick=async()=>{
   opening=true; $('#go').disabled=true;
   try{
     $('#verdict').className='verdict'; $('#verdict').innerHTML='—';
+    if(streaming){
+      // câmera já ligada de uma tentativa anterior: não reabre nada, começa o desafio na hora
+      $('#prompt').textContent='novo desafio — olhe para a câmera';
+      runChallenge();
+      return;
+    }
     $('#prompt').textContent='abrindo a câmera… posicione o rosto e fique parado 1s';
     wantChallenge=true;
     const ok=await startCam();
@@ -378,6 +384,13 @@ function buildChallenge(){
 function runChallenge(){
   if(!streaming){ return; }
   t0=perf();
+  // CAUSA RAIZ do "reprovou em milissegundos" (Max, 16/09): motionHist só era limpo em
+  // startCam(), então o histórico do que veio ANTES do desafio — os segundos de calibração,
+  // em que a pessoa ainda está se ajeitando na frente da câmera, ou a tentativa anterior —
+  // entrava na mediana do detector de corte. No primeiro frame do desafio novo, essa mediana
+  // contaminada já reprovava por "salto de movimento" antes de dar tempo de fazer o gesto.
+  // A janela do detector de corte tem de conter só movimento MEDIDO DENTRO deste desafio.
+  motionHist=[];
   staticDet.reset();   // a trava roda CONTÍNUA por todo o desafio, sem zerar a cada passo
   challenge={steps:buildChallenge(), idx:0, deadline:0, t0:0, baseYaw:1, baseMouth:0.4, startBlinks:0, yawTrace:[]};
   startWatchdog(); renderSteps(); nextStep();
@@ -441,8 +454,13 @@ function finish(pass,reason){
     (pass && sourceSuspect ? '<span class="warn-line">⚑ mas a fonte parece câmera virtual — revisar manualmente</span>' : '');
   $('#prompt').textContent = pass?'passou! clique "Começar" para repetir':'não provou — clique "Começar" para tentar de novo';
   log((pass?'PASSOU':'REPROVOU')+': '+reason+(sourceSuspect?' [fonte suspeita]':''));
-  stopStream(false);   // achado 13: desliga camera e o laco de inferencia ao terminar, sem apagar o veredito que acabou de mostrar
+  // Pedido do Max (16/09): a câmera NÃO se fecha a cada veredito. Antes, todo resultado
+  // chamava stopStream() e a próxima tentativa tinha de reabrir a câmera do zero — atrito
+  // grande justamente quando se está testando em série. Agora só o desafio termina; a câmera
+  // e o laço de inferência seguem vivos, e quem desliga é o botão "Parar" (ou fechar a aba).
+  endChallenge();
 }
+function endChallenge(){ stopWatchdog(); challenge=null; renderSteps(); }
 
 // ---------- autoteste (sem câmera) ----------
 $('#selftest').onclick=()=>{
